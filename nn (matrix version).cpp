@@ -121,6 +121,24 @@ public:
     }
 };
 
+
+// Mean Squared Error loss function
+double mse_loss(const Matrix& predicted, const Matrix& target) {
+    if (predicted.rows != target.rows || predicted.cols != target.cols) {
+        throw std::invalid_argument("Dimensions of predicted and target matrices don't match");
+    }
+    
+    double sum = 0.0;
+    for (size_t i = 0; i < predicted.rows; ++i) {
+        for (size_t j = 0; j < predicted.cols; ++j) {
+            double diff = predicted.data[i][j] - target.data[i][j];
+            sum += diff * diff;
+        }
+    }
+    return sum / (predicted.rows * predicted.cols);
+}
+
+
 int main() {
     NeuralNetwork nn({2, 3, 1});
     
