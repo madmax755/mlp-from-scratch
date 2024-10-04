@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cmath>
 #include <random>
+#include <algorithm>
 #include <stdexcept>
 
 // matrix class for handling matrix operations
@@ -30,8 +31,11 @@ public:
     // matrix multiplication overloading the * operator 
     Matrix operator*(const Matrix& other) const {
         if (cols != other.rows) {
-            throw std::invalid_argument("Matrix dimensions don't match for multiplication");
-        }
+        std::cerr << "Attempted to multiply matrices of incompatible dimensions: "
+                  << "(" << rows << "x" << cols << ") * (" 
+                  << other.rows << "x" << other.cols << ")" << std::endl;
+        throw std::invalid_argument("Matrix dimensions don't match for multiplication");
+    }
         Matrix result(rows, other.cols);
         for (size_t i = 0; i < rows; i++) {
             for (size_t j = 0; j < other.cols; j++) {
@@ -93,26 +97,40 @@ public:
         return result;
     }
 
-    // apply a function element-wise to the matrix
-    void apply(double (*func)(double)) {
-        for (auto& row : data) {
-            for (auto& elem : row) {
-                elem = func(elem);
+    // hadamard producht
+    Matrix hadamard(const Matrix& other) const {
+        if (rows != other.rows || cols != other.cols) {
+            throw std::invalid_argument("Matrix dimensions don't match for Hadamard product");
+        }
+        Matrix result(rows, cols);
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                result.data[i][j] = data[i][j] * other.data[i][j];
             }
         }
+        return result;
+    }
+
+    // apply a function element-wise to the matrix
+    Matrix apply(double (*func)(double)) const {
+        Matrix result(rows, cols);
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                result.data[i][j] = func(data[i][j]);
+            }
+        }
+        return result; 
     }
 };
 
-// sigmoid activation function
-double sigmoid(double x) {
-    return 1.0 / (1.0 + std::exp(-x));
+double relu(double x) {
+    return std::max(0.0, x);
 }
 
-// derivative of sigmoid function (used in backpropagation)
-double sigmoid_derivative(double x) {
-    double sig = sigmoid(x);
-    return sig * (1.0 - sig);
+double relu_derivative(double x) {
+    return x > 0 ? 1.0 : 0.0;
 }
+
 
 // layer class representing a single layer in the neural network
 class Layer {
@@ -120,18 +138,27 @@ public:
     Matrix weights;
     Matrix bias;
     Matrix output;
+    Matrix input;  // store input for backpropagation
+    Matrix z;      // store weighted input for backpropagation
     // storing 'vectors' as matrix types to reuse matmul code (mathematicians close your eyes).
 
     // constructor: initialize weights and biases with random values
-    Layer(size_t input_size, size_t output_size) : weights(output_size, input_size), bias(output_size, 1), output(output_size, 1) {
+    Layer(size_t input_size, size_t output_size) 
+        : weights(output_size, input_size),
+          bias(output_size, 1),
+          output(output_size, 1),
+          input(input_size, 1),
+          z(output_size, 1) {
         weights.randomize();
         bias.randomize();
     }
 
     // perform feedforward operation for this layer
     Matrix feedforward(const Matrix& input) {
-        output = weights * input + bias; 
-        output.apply(sigmoid);
+        this->input = input;  // Store input
+        z = weights * input + bias;  // Store pre-activation
+        output = z;
+        output.apply(relu);
         return output;
     }
 };
@@ -155,6 +182,45 @@ public:
             current = layer.feedforward(current);
         }
         return current;
+    }
+
+    // updates weights and biases for a single training example
+    void backpropagate(const Matrix& input, const Matrix& target, double learning_rate) {
+        // Forward pass
+        std::vector<Matrix> activations = {input};
+        for (auto& layer : layers) {
+            activations.push_back(layer.feedforward(activations.back()));
+        }
+        std::cout << activations.back().data[0][0];
+
+        // Backward pass
+        int num_layers = layers.size();
+        std::vector<Matrix> deltas;
+        deltas.reserve(num_layers);
+
+        // 1. Output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
+        Matrix output_error = activations.back() - target;
+        Matrix output_delta = output_error.hadamard(layers.back().z.apply(relu_derivative));
+        deltas.push_back(output_delta);
+
+        // 2. Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
+        for (int l = num_layers - 2; l >= 0; l--) {
+            Matrix delta = (layers[l+1].weights.transpose() * deltas.back()).hadamard(layers[l].z.apply(relu_derivative));
+            deltas.push_back(delta);
+        }
+
+        // Reverse deltas to match layer order
+        std::reverse(deltas.begin(), deltas.end());
+
+        // 3 & 4. Update weights and biases
+        for (int l = 0; l < num_layers; l++) {
+            // ∂C/∂b^l = δ^l
+            layers[l].bias = layers[l].bias - (deltas[l] * learning_rate);
+
+            // ∂C/∂w^l = δ^l (a^(l-1))^T
+            Matrix weight_gradient = deltas[l] * activations[l].transpose();
+            layers[l].weights = layers[l].weights - (weight_gradient * learning_rate);
+        }
     }
 };
 
@@ -181,8 +247,23 @@ int main() {
     
     Matrix input(2, 1);
     input.data = {{1}, {0}};  // example input
-    Matrix output = nn.feedforward(input);
-    
-    std::cout << "Output: " << output.data[0][0] << "\n";
+    Matrix target(1, 1);
+    target.data = {{3}};  // example target
+
+    // Training loop
+    for (int epoch = 0; epoch < 1000; epoch++) {
+        nn.backpropagate(input, target, 0.1);  // learning rate of 0.1
+        
+        if (epoch % 100 == 0) {
+            Matrix output = nn.feedforward(input);
+            double loss = mse_loss(output, target);
+            std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
+        }
+    }
+
+    // Final prediction
+    Matrix final_output = nn.feedforward(input);
+    std::cout << "Final Output: " << final_output.data[0][0] << "\n";
+
     return 0;
 }
