@@ -57,6 +57,42 @@ public:
         return result;
     }
 
+    // element-wise subtraction 
+    Matrix operator-(const Matrix& other) const {
+        if (rows != other.rows || cols != other.cols) {
+            throw std::invalid_argument("Matrix dimensions don't match for subtraction");
+        }
+        Matrix result(rows, cols);
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                result.data[i][j] = data[i][j] - other.data[i][j];
+            }
+        }
+        return result;
+    }
+
+    // scalar multiplication
+    Matrix operator*(double scalar) const {
+        Matrix result(rows, cols);
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                result.data[i][j] = data[i][j] * scalar;
+            }
+        }
+        return result;
+    }
+
+    // transpose 
+    Matrix transpose() const {
+        Matrix result(cols, rows);
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                result.data[j][i] = data[i][j];
+            }
+        }
+        return result;
+    }
+
     // apply a function element-wise to the matrix
     void apply(double (*func)(double)) {
         for (auto& row : data) {
@@ -81,9 +117,10 @@ double sigmoid_derivative(double x) {
 // layer class representing a single layer in the neural network
 class Layer {
 public:
-    Matrix weights;  // weight matrix
-    Matrix bias;     // bias vector
-    Matrix output;   // output of this layer
+    Matrix weights;
+    Matrix bias;
+    Matrix output;
+    // storing 'vectors' as matrix types to reuse matmul code (mathematicians close your eyes).
 
     // constructor: initialize weights and biases with random values
     Layer(size_t input_size, size_t output_size) : weights(output_size, input_size), bias(output_size, 1), output(output_size, 1) {
@@ -122,12 +159,12 @@ public:
 };
 
 
-// Mean Squared Error loss function
+// Mean Squared Error (MSE) loss function
 double mse_loss(const Matrix& predicted, const Matrix& target) {
     if (predicted.rows != target.rows || predicted.cols != target.cols) {
         throw std::invalid_argument("Dimensions of predicted and target matrices don't match");
     }
-    
+
     double sum = 0.0;
     for (size_t i = 0; i < predicted.rows; ++i) {
         for (size_t j = 0; j < predicted.cols; ++j) {
