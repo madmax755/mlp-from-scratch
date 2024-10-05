@@ -17,13 +17,50 @@ public:
     }
 
     // initialize matrix with random values between -1 and 1
-    void randomize() {
+    void uniform_initialise() {
         std::random_device rd;  // obtain a random number from hardware
         std::mt19937 gen(rd());  // seed the generator
         std::uniform_real_distribution<> dis(-1.0, 1.0);  // define the range
         for (auto& row : data) {
             for (auto& elem : row) {
                 elem = dis(gen);  // generate random number
+            }
+        }
+    }
+
+
+    // initialize matrix with random values between -1 and 1
+    void zero_initialise() {
+        for (auto& row : data) {
+            for (auto& elem : row) {
+                elem = 0;  // generate random number
+            }
+        }
+    }
+
+    // for sigmoid activation
+    void xavier_initialize() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        double limit = sqrt(6.0 / (rows + cols));
+        std::uniform_real_distribution<> dis(-limit, limit);
+        for (auto& row : data) {
+            for (auto& elem : row) {
+                elem = dis(gen);
+            }
+        }
+    }
+
+
+    // for ReLU activation
+    void he_initialise() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        double std_dev = sqrt(2.0 / cols);  
+        std::normal_distribution<> dis(0, std_dev);
+        for (auto& row : data) {
+            for (auto& elem : row) {
+                elem = dis(gen);
             }
         }
     }
@@ -123,14 +160,16 @@ public:
     }
 };
 
-double relu(double x) {
-    return std::max(0.0, x);
+// Sigmoid activation function
+double sigmoid(double x) {
+    return 1.0 / (1.0 + std::exp(-x));
 }
 
-double relu_derivative(double x) {
-    return x > 0 ? 1.0 : 0.0;
+// Sigmoid derivative
+double sigmoid_derivative(double x) {
+    double s = sigmoid(x);
+    return s * (1.0 - s);
 }
-
 
 // layer class representing a single layer in the neural network
 class Layer {
@@ -149,16 +188,15 @@ public:
           output(output_size, 1),
           input(input_size, 1),
           z(output_size, 1) {
-        weights.randomize();
-        bias.randomize();
+        weights.xavier_initialize();
+        bias.zero_initialise();
     }
 
     // perform feedforward operation for this layer
     Matrix feedforward(const Matrix& input) {
         this->input = input;  // Store input
         z = weights * input + bias;  // Store pre-activation
-        output = z;
-        output.apply(relu);
+        output = z.apply(sigmoid);
         return output;
     }
 };
@@ -191,7 +229,16 @@ public:
         for (auto& layer : layers) {
             activations.push_back(layer.feedforward(activations.back()));
         }
-        std::cout << activations.back().data[0][0];
+
+        if (activations.back().data[0][0] == 0.0) {
+            for (size_t i; i < layers.size(); ++i) {
+                std::cout << "l" << i << ": ";
+                for (auto& neuron : layers[i].output.data) {
+                    std::cout << neuron[0] << ",";
+                }
+                std::cout << "\n";
+            }
+        }
 
         // Backward pass
         int num_layers = layers.size();
@@ -200,12 +247,12 @@ public:
 
         // 1. Output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
         Matrix output_error = activations.back() - target;
-        Matrix output_delta = output_error.hadamard(layers.back().z.apply(relu_derivative));
+        Matrix output_delta = output_error.hadamard(layers.back().z.apply(sigmoid_derivative));
         deltas.push_back(output_delta);
 
         // 2. Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
         for (int l = num_layers - 2; l >= 0; l--) {
-            Matrix delta = (layers[l+1].weights.transpose() * deltas.back()).hadamard(layers[l].z.apply(relu_derivative));
+            Matrix delta = (layers[l+1].weights.transpose() * deltas.back()).hadamard(layers[l].z.apply(sigmoid_derivative));
             deltas.push_back(delta);
         }
 
@@ -243,16 +290,16 @@ double mse_loss(const Matrix& predicted, const Matrix& target) {
 
 
 int main() {
-    NeuralNetwork nn({2, 3, 1});
+    NeuralNetwork nn({5, 3, 3, 1});
     
-    Matrix input(2, 1);
-    input.data = {{1}, {0}};  // example input
+    Matrix input(5, 1);
+    input.data = {{1}, {0.5}, {0.9}, {-0.5}, {0.01}};  // example input
     Matrix target(1, 1);
-    target.data = {{3}};  // example target
+    target.data = {{0.7}};  // example target
 
     // Training loop
     for (int epoch = 0; epoch < 1000; epoch++) {
-        nn.backpropagate(input, target, 0.1);  // learning rate of 0.1
+        nn.backpropagate(input, target, 0.1);
         
         if (epoch % 100 == 0) {
             Matrix output = nn.feedforward(input);
