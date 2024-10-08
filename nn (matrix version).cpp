@@ -173,6 +173,24 @@ public:
         }
         return result;
     }
+
+    Matrix softmax() const {
+        Matrix result(rows, cols);
+        for (size_t i = 0; i < rows; ++i) {
+            double max_val = *std::max_element(data[i].begin(), data[i].end());
+            double sum = 0.0;
+            
+            for (size_t j = 0; j < cols; ++j) {
+                result.data[i][j] = std::exp(data[i][j] - max_val);
+                sum += result.data[i][j];
+            }
+            
+            for (size_t j = 0; j < cols; ++j) {
+                result.data[i][j] /= sum;
+            }
+        }
+        return result;
+    }
 };
 
 // Sigmoid activation function
@@ -186,6 +204,18 @@ double sigmoid_derivative(double x) {
     return s * (1.0 - s);
 }
 
+// relu activation function
+double relu(double x) {
+    return std::max(x, 0.0);
+}
+
+// relu derivative
+double relu_derivative(double x) {
+    return (x>0) ? x : 0.0;
+}
+
+
+
 // layer class representing a single layer in the neural network
 class Layer {
 public:
@@ -194,15 +224,18 @@ public:
     Matrix output;
     Matrix input;  // store input for backpropagation
     Matrix z;      // store weighted input for backpropagation
+    std::string activation_function;
+
     // storing 'vectors' as matrix types to reuse matmul code (mathematicians close your eyes).
 
     // constructor: initialize weights and biases with random values
-    Layer(size_t input_size, size_t output_size) 
+    Layer(size_t input_size, size_t output_size, std::string activation_function="sigmoid") 
         : weights(output_size, input_size),
           bias(output_size, 1),
           output(output_size, 1),
           input(input_size, 1),
-          z(output_size, 1) {
+          z(output_size, 1),
+          activation_function(activation_function) {
         weights.xavier_initialize();
         bias.zero_initialise();
     }
@@ -211,7 +244,16 @@ public:
     Matrix feedforward(const Matrix& input) {
         this->input = input;  // Store input
         z = weights * input + bias;  // Store pre-activation
-        output = z.apply(sigmoid);
+        if (activation_function == "sigmoid") {
+            output = z.apply(sigmoid);
+        }
+        else if (activation_function == "relu"){
+            output = z.apply(relu);
+        }
+        else if (activation_function == "softmax") {
+            output = z.softmax();
+        }
+        
         return output;
     }
 };
@@ -222,9 +264,20 @@ public:
     std::vector<Layer> layers;  // vector to store all layers
 
     // constructor: create layers based on the given topology
-    NeuralNetwork(const std::vector<int>& topology) {
-        for (size_t i = 1; i < topology.size(); i++) {
-            layers.emplace_back(topology[i-1], topology[i]);
+    NeuralNetwork(const std::vector<int>& topology, const std::vector<std::string> activation_functions = {}) {
+        if ((activation_functions.size() != topology.size()) and (activation_functions.size() != 0)) {
+            throw std::invalid_argument("the size of activations_functions vector must be the same size as topology");
+        }
+        else if (activation_functions.size() == 0) {
+            for (size_t i = 1; i < topology.size(); i++) {
+                // do not pass in specific activation function - use the default specified in the layer constructor
+                layers.emplace_back(topology[i-1], topology[i]);
+            }
+        }
+        else {
+            for (size_t i = 1; i < topology.size(); i++) {
+                layers.emplace_back(topology[i-1], topology[i], activation_functions[i]);
+            }
         }
     }
 
@@ -261,13 +314,40 @@ public:
         deltas.reserve(num_layers);
 
         // 1. Output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
-        Matrix output_error = activations.back() - target;
-        Matrix output_delta = output_error.hadamard(layers.back().z.apply(sigmoid_derivative));
+
+        Matrix output_delta = activations.back() - target;
+        if (layers.back().activation_function == "sigmoid") {
+            output_delta = output_delta.hadamard(layers.back().z.apply(sigmoid_derivative));
+        }
+        else if (layers.back().activation_function == "relu") {
+            output_delta = output_delta.hadamard(layers.back().z.apply(relu_derivative));
+        }
+        else if (layers.back().activation_function == "none" or layers.back().activation_function == "softmax") {
+            output_delta = output_delta;
+        }
+        else {
+            throw std::runtime_error("Missing activation function during training");
+        }
+        
+
         deltas.push_back(output_delta);
 
         // 2. Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
         for (int l = num_layers - 2; l >= 0; l--) {
-            Matrix delta = (layers[l+1].weights.transpose() * deltas.back()).hadamard(layers[l].z.apply(sigmoid_derivative));
+            Matrix delta = (layers[l+1].weights.transpose() * deltas.back());
+
+            if (layers[l].activation_function == "sigmoid") {
+                delta = delta.hadamard(layers[l].z.apply(sigmoid_derivative));
+            }
+            else if (layers[l].activation_function == "relu") {
+                delta = delta.hadamard(layers[l].z.apply(relu_derivative));
+            }
+            else if (layers[l].activation_function == "none") {
+                delta = delta;
+            }
+            else {
+                throw std::runtime_error("Missing activation function during training");
+            }
             deltas.push_back(delta);
         }
 
@@ -387,8 +467,15 @@ int main() {
             input_data.data = image_data;
 
             // create the label matrix
-            Matrix label_data(1,1);
-            label_data.data = {{i}};
+            Matrix label_data(10,1);
+            std::vector<std::vector<double>> data;
+
+            // construct the label matrix with 1.0 in the postion of the digit and zeros elsewehre
+            for (size_t l = 0; l<i; ++l) {data.push_back({0.0});}
+            data.push_back({1.0});
+            for (size_t l = 0; l+i+1<10; ++l) {data.push_back({0.0});}
+
+            label_data.data = data;
 
             // push both image and label into training_set
             training_set.push_back({input_data, label_data});
@@ -397,8 +484,9 @@ int main() {
 
 
     int input_size = 28*28;
-    // todo make so that it is a classification nn for softmax
-    NeuralNetwork nn({input_size, input_size, input_size, 1});
+    std::vector<int> topology = {input_size, input_size, input_size, 10};
+    std::vector<std::string> activation_functions = {"none", "sigmoid", "sigmoid", "softmax"};
+    NeuralNetwork nn(topology, activation_functions);
 
     int no_examples = 9000;
     int batch_size = 90;
@@ -410,13 +498,12 @@ int main() {
         gradients.reserve(batch_size);
         for (int batch_no = 0; batch_no < no_examples/batch_size; ++batch_no) {
 
-
-                for (int i = 0; i < batch_size; ++i) {
-                    Matrix input = training_set[batch_no*batch_size + i][0];
-                    Matrix target = training_set[batch_no*batch_size + i][1];
-                
-                    gradients.push_back(nn.calculate_gradient(input, target));
-                }
+            for (int i = 0; i < batch_size; ++i) {
+                Matrix input = training_set[batch_no*batch_size + i][0];
+                Matrix target = training_set[batch_no*batch_size + i][1];
+            
+                gradients.push_back(nn.calculate_gradient(input, target));
+            }
 
             std::vector<std::vector<Matrix>> gradient = average_gradients(gradients);
 
