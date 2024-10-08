@@ -151,7 +151,7 @@ public:
         return result;
     }
 
-    // apply a function element-wise to the matrix
+    // for function pointers 
     Matrix apply(double (*func)(double)) const {
         Matrix result(rows, cols);
         for (size_t i = 0; i < rows; i++) {
@@ -159,7 +159,19 @@ public:
                 result.data[i][j] = func(data[i][j]);
             }
         }
-        return result; 
+        return result;
+    }
+
+    // for lambda functions and other callable objects
+    template<typename Func>
+    Matrix apply(Func func) const {
+        Matrix result(rows, cols);
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = 0; j < cols; j++) {
+                result.data[i][j] = func(data[i][j]);
+            }
+        }
+        return result;
     }
 };
 
@@ -270,9 +282,11 @@ public:
             Matrix weight_gradient = deltas[l] * activations[l].transpose();
             result.push_back({weight_gradient, deltas[l]});
         }
+        
+        return result;
     }
 
-    void apply_adjustments(const std::vector<std::vector<Matrix>>& gradients, double learning_rate) {
+    void apply_adjustments(std::vector<std::vector<Matrix>>& gradients, double learning_rate) {
         int num_layers = layers.size();
         for (int l = 0; l < num_layers; l++) {
             layers[l].weights = layers[l].weights - (gradients[l][0] * learning_rate);
@@ -313,23 +327,51 @@ std::vector<unsigned char> read_file(const std::string& path) {
         return buffer;
     }
     else {
-        std::cout << "Error reading file" << "\n";
+        std::cout << "Error reading file " << path << "\n";
         
         return std::vector<unsigned char>();  // return an empty vector
     }
 }
 
 
+
+std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>>& gradients) {
+    std::vector<std::vector<Matrix>> result;
+    size_t no_layers = gradients[0].size();
+    double no_examples = gradients.size();
+
+    for (size_t i = 0; i<no_layers; ++i){
+        auto layer = gradients[0][i];
+        Matrix weight_average(layer[0].rows, layer[0].cols);
+        Matrix bias_average(layer[1].rows, layer[1].cols);
+
+        for (auto& example_gradients : gradients) {
+            weight_average = weight_average + example_gradients[i][0];
+            bias_average = bias_average + example_gradients[i][1];
+        }
+
+        weight_average = weight_average.apply([no_examples](double x) { return x / no_examples; });
+        bias_average = bias_average.apply([no_examples](double x) { return x / no_examples; });
+
+        result.push_back({weight_average, bias_average});
+    }
+
+    return result;
+}
+
+
+
+
 int main() {
 
     // 705600
 
-    std::vector<std::vector<std::vector<std::vector<double>>>> training_set;
+    std::vector<std::vector<Matrix>> training_set;
     training_set.reserve(9000);
 
     // create training set from binary image data files
     for (double i = 0; i < 10; ++i) {
-        std::string file_path = "mnist data/data" + std::to_string(i) + ".dat";
+        std::string file_path = "mnist data/data" + std::to_string((int)std::round(i)) + ".dat";
         std::vector<unsigned char> full_digit_data = read_file(file_path);
 
         for (int j = 0; j < 705600; j += 28*28) {
@@ -340,33 +382,54 @@ int main() {
                 image_data.push_back({normalised_pixel});
             }
 
-            // create the label vector
-            std::vector<std::vector<double>> label_data = {{i}};
+            // create the input matrix
+            Matrix input_data(28*28, 1);
+            input_data.data = image_data;
+
+            // create the label matrix
+            Matrix label_data(1,1);
+            label_data.data = {{i}};
 
             // push both image and label into training_set
-            training_set.push_back({image_data, label_data});
+            training_set.push_back({input_data, label_data});
         }
     }
 
 
     int input_size = 28*28;
-    NeuralNetwork nn({input_size, 2*input_size, 2*input_size, 2*input_size, 10});
-    
-    Matrix input(28*28, 1);
-    input.data = training_set[0][0];
-    Matrix target(1, 1);
-    target.data = training_set[0][1];  // example target
+    // todo make so that it is a classification nn for softmax
+    NeuralNetwork nn({input_size, input_size, input_size, 1});
+
+    int no_examples = 9000;
+    int batch_size = 90;
 
     // Training loop
-    for (int epoch = 0; epoch < 1000; epoch++) {
-        std::vector<std::vector<Matrix>> gradients = nn.calculate_gradient(input, target);
-        nn.apply_adjustments(gradients, 0.1);
-        
-        if (epoch % 100 == 0) {
-            Matrix output = nn.feedforward(input);
-            double loss = mse_loss(output, target);
-            std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
+    for (int epoch = 0; epoch < 10; epoch++) {
+
+        std::vector<std::vector<std::vector<Matrix>>> gradients;
+        gradients.reserve(batch_size);
+        for (int batch_no = 0; batch_no < no_examples/batch_size; ++batch_no) {
+
+
+                for (int i = 0; i < batch_size; ++i) {
+                    Matrix input = training_set[batch_no*batch_size + i][0];
+                    Matrix target = training_set[batch_no*batch_size + i][1];
+                
+                    gradients.push_back(nn.calculate_gradient(input, target));
+                }
+
+            std::vector<std::vector<Matrix>> gradient = average_gradients(gradients);
+
+            nn.apply_adjustments(gradient, 0.1);
+            std::cout << "applied adjustments \n";
+
+            gradients.clear();
         }
+
+
+        Matrix output = nn.feedforward(training_set[0][0]);
+        double loss = mse_loss(output, training_set[0][1]);
+        std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
     }
 
     // // Final prediction
