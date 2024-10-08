@@ -4,6 +4,9 @@
 #include <random>
 #include <algorithm>
 #include <stdexcept>
+#include <string>
+#include <fstream>
+
 
 // matrix class for handling matrix operations
 class Matrix {
@@ -207,7 +210,7 @@ public:
     std::vector<Layer> layers;  // vector to store all layers
 
     // constructor: create layers based on the given topology
-    NeuralNetwork(const std::vector<size_t>& topology) {
+    NeuralNetwork(const std::vector<int>& topology) {
         for (size_t i = 1; i < topology.size(); i++) {
             layers.emplace_back(topology[i-1], topology[i]);
         }
@@ -289,28 +292,72 @@ double mse_loss(const Matrix& predicted, const Matrix& target) {
 }
 
 
-int main() {
-    NeuralNetwork nn({5, 3, 3, 1});
+std::vector<unsigned char> read_file(const std::string& path) {
+    std::ifstream file(path, std::ios::in | std::ios::binary);
     
-    Matrix input(5, 1);
-    input.data = {{1}, {0.5}, {0.9}, {-0.5}, {0.01}};  // example input
-    Matrix target(1, 1);
-    target.data = {{0.7}};  // example target
-
-    // Training loop
-    for (int epoch = 0; epoch < 1000; epoch++) {
-        nn.backpropagate(input, target, 0.1);
+    if (file) {
+        std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file), {});
         
-        if (epoch % 100 == 0) {
-            Matrix output = nn.feedforward(input);
-            double loss = mse_loss(output, target);
-            std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
+        // for (unsigned char byte : buffer) {
+        //     std::cout << static_cast<int>(byte) << " ";
+        // }
+        // std::cout << "\n";
+
+        return buffer;
+    }
+    else {
+        std::cout << "Error reading file" << "\n";
+        
+        return std::vector<unsigned char>();  // return an empty vector
+    }
+}
+
+
+int main() {
+
+    // 705600
+
+    std::vector<std::vector<std::vector<unsigned char>>> training_set;
+    training_set.reserve(9000);
+
+    // create training set from binary image data files
+    for (unsigned char i=0; i<10; ++i) {
+        std::string file_path = "mnist data/data" + std::to_string(i) + ".dat";
+        std::vector<unsigned char> full_digit_data = read_file(file_path);
+
+        for (int j=0; j<705600; j += 28*28) {
+            std::vector<unsigned char> data;
+
+            for (int k=0; k<28*28; ++k){
+                data.push_back(full_digit_data[j+k]);
+            }
+            training_set.push_back({data,{i}});
         }
     }
 
-    // Final prediction
-    Matrix final_output = nn.feedforward(input);
-    std::cout << "Final Output: " << final_output.data[0][0] << "\n";
+
+    int input_size = 28*28;
+    NeuralNetwork nn({input_size, 2*input_size, 2*input_size, 2*input_size, 10});
+    
+    // Matrix input(5, 1);
+    // input.data = {{1}, {0.5}, {0.9}, {-0.5}, {0.01}};  // example input
+    // Matrix target(1, 1);
+    // target.data = {{0.7}};  // example target
+
+    // Training loop
+    // for (int epoch = 0; epoch < 1000; epoch++) {
+    //     nn.backpropagate(input, target, 0.1);
+        
+    //     if (epoch % 100 == 0) {
+    //         Matrix output = nn.feedforward(input);
+    //         double loss = mse_loss(output, target);
+    //         std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
+    //     }
+    // }
+
+    // // Final prediction
+    // Matrix final_output = nn.feedforward(input);
+    // std::cout << "Final Output: " << final_output.data[0][0] << "\n";
 
     return 0;
 }
