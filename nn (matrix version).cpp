@@ -226,7 +226,7 @@ public:
     }
 
     // updates weights and biases for a single training example
-    void backpropagate(const Matrix& input, const Matrix& target, double learning_rate) {
+    std::vector<std::vector<Matrix>> calculate_gradient(const Matrix& input, const Matrix& target) {
         // Forward pass
         std::vector<Matrix> activations = {input};
         for (auto& layer : layers) {
@@ -262,14 +262,21 @@ public:
         // Reverse deltas to match layer order
         std::reverse(deltas.begin(), deltas.end());
 
-        // 3 & 4. Update weights and biases
+        // 3 & 4. calculate updates to weights and biases
+        std::vector<std::vector<Matrix>> result;
         for (int l = 0; l < num_layers; l++) {
             // ∂C/∂b^l = δ^l
-            layers[l].bias = layers[l].bias - (deltas[l] * learning_rate);
-
             // ∂C/∂w^l = δ^l (a^(l-1))^T
             Matrix weight_gradient = deltas[l] * activations[l].transpose();
-            layers[l].weights = layers[l].weights - (weight_gradient * learning_rate);
+            result.push_back({weight_gradient, deltas[l]});
+        }
+    }
+
+    void apply_adjustments(const std::vector<std::vector<Matrix>>& gradients, double learning_rate) {
+        int num_layers = layers.size();
+        for (int l = 0; l < num_layers; l++) {
+            layers[l].weights = layers[l].weights - (gradients[l][0] * learning_rate);
+            layers[l].bias = layers[l].bias - (gradients[l][1] * learning_rate);
         }
     }
 };
@@ -317,21 +324,27 @@ int main() {
 
     // 705600
 
-    std::vector<std::vector<std::vector<unsigned char>>> training_set;
+    std::vector<std::vector<std::vector<std::vector<double>>>> training_set;
     training_set.reserve(9000);
 
     // create training set from binary image data files
-    for (unsigned char i=0; i<10; ++i) {
+    for (double i = 0; i < 10; ++i) {
         std::string file_path = "mnist data/data" + std::to_string(i) + ".dat";
         std::vector<unsigned char> full_digit_data = read_file(file_path);
 
-        for (int j=0; j<705600; j += 28*28) {
-            std::vector<unsigned char> data;
-
+        for (int j = 0; j < 705600; j += 28*28) {
+            std::vector<std::vector<double>> image_data;
+                
             for (int k=0; k<28*28; ++k){
-                data.push_back(full_digit_data[j+k]);
+                double normalised_pixel = static_cast<double>(full_digit_data[j+k]) / 255.0;
+                image_data.push_back({normalised_pixel});
             }
-            training_set.push_back({data,{i}});
+
+            // create the label vector
+            std::vector<std::vector<double>> label_data = {{i}};
+
+            // push both image and label into training_set
+            training_set.push_back({image_data, label_data});
         }
     }
 
@@ -339,21 +352,22 @@ int main() {
     int input_size = 28*28;
     NeuralNetwork nn({input_size, 2*input_size, 2*input_size, 2*input_size, 10});
     
-    // Matrix input(5, 1);
-    // input.data = {{1}, {0.5}, {0.9}, {-0.5}, {0.01}};  // example input
-    // Matrix target(1, 1);
-    // target.data = {{0.7}};  // example target
+    Matrix input(28*28, 1);
+    input.data = training_set[0][0];
+    Matrix target(1, 1);
+    target.data = training_set[0][1];  // example target
 
     // Training loop
-    // for (int epoch = 0; epoch < 1000; epoch++) {
-    //     nn.backpropagate(input, target, 0.1);
+    for (int epoch = 0; epoch < 1000; epoch++) {
+        std::vector<std::vector<Matrix>> gradients = nn.calculate_gradient(input, target);
+        nn.apply_adjustments(gradients, 0.1);
         
-    //     if (epoch % 100 == 0) {
-    //         Matrix output = nn.feedforward(input);
-    //         double loss = mse_loss(output, target);
-    //         std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
-    //     }
-    // }
+        if (epoch % 100 == 0) {
+            Matrix output = nn.feedforward(input);
+            double loss = mse_loss(output, target);
+            std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
+        }
+    }
 
     // // Final prediction
     // Matrix final_output = nn.feedforward(input);
