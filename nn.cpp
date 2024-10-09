@@ -1,21 +1,22 @@
-#include <vector>
-#include <iostream>
-#include <cmath>
-#include <random>
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
-#include <fstream>
 #include <thread>
-#include <mutex>
-#include <chrono>
+#include <vector>
 
-// Sigmoid activation function
+// sigmoid activation function
 double sigmoid(double x) {
     return 1.0 / (1.0 + std::exp(-x));
 }
 
-// Sigmoid derivative
+// sigmoid derivative
 double sigmoid_derivative(double x) {
     double s = sigmoid(x);
     return s * (1.0 - s);
@@ -28,37 +29,34 @@ double relu(double x) {
 
 // relu derivative
 double relu_derivative(double x) {
-    return (x>0) ? x : 0.0;
+    return (x > 0) ? x : 0.0;
 }
 
-
 // read binary file into a vector
-std::vector<unsigned char> read_file(const std::string& path) {
+std::vector<unsigned char> read_file(const std::string &path) {
     std::ifstream file(path, std::ios::in | std::ios::binary);
-    
+
     if (file) {
         std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file), {});
-        
+
         // for (unsigned char byte : buffer) {
         //     std::cout << static_cast<int>(byte) << " ";
         // }
         // std::cout << "\n";
 
         return buffer;
-    }
-    else {
+    } else {
         std::cout << "Error reading file " << path << "\n";
-        
+
         return std::vector<unsigned char>();  // return an empty vector
     }
 }
 
-
 // matrix class for handling matrix operations
 class Matrix {
-public:
+   public:
     std::vector<std::vector<double>> data;  // 2D vector to store matrix data
-    size_t rows, cols;  // dimensions of the matrix
+    size_t rows, cols;                      // dimensions of the matrix
 
     // constructor: initialize matrix with given dimensions
     Matrix(size_t rows, size_t cols) : rows(rows), cols(cols) {
@@ -67,11 +65,11 @@ public:
 
     // initialize matrix with random values between -1 and 1
     void uniform_initialise() {
-        std::random_device rd;  // obtain a random number from hardware
-        std::mt19937 gen(rd());  // seed the generator
+        std::random_device rd;                            // obtain a random number from hardware
+        std::mt19937 gen(rd());                           // seed the generator
         std::uniform_real_distribution<> dis(-1.0, 1.0);  // define the range
-        for (auto& row : data) {
-            for (auto& elem : row) {
+        for (auto &row : data) {
+            for (auto &elem : row) {
                 elem = dis(gen);  // generate random number
             }
         }
@@ -79,8 +77,8 @@ public:
 
     // initialize matrix with zeros
     void zero_initialise() {
-        for (auto& row : data) {
-            for (auto& elem : row) {
+        for (auto &row : data) {
+            for (auto &elem : row) {
                 elem = 0;  // generate random number
             }
         }
@@ -92,8 +90,8 @@ public:
         std::mt19937 gen(rd());
         double limit = sqrt(6.0 / (rows + cols));
         std::uniform_real_distribution<> dis(-limit, limit);
-        for (auto& row : data) {
-            for (auto& elem : row) {
+        for (auto &row : data) {
+            for (auto &elem : row) {
                 elem = dis(gen);
             }
         }
@@ -103,23 +101,23 @@ public:
     void he_initialise() {
         std::random_device rd;
         std::mt19937 gen(rd());
-        double std_dev = sqrt(2.0 / cols);  
+        double std_dev = sqrt(2.0 / cols);
         std::normal_distribution<> dis(0, std_dev);
-        for (auto& row : data) {
-            for (auto& elem : row) {
+        for (auto &row : data) {
+            for (auto &elem : row) {
                 elem = dis(gen);
             }
         }
     }
 
-    // matrix multiplication overloading the * operator 
-    Matrix operator*(const Matrix& other) const {
+    // matrix multiplication overloading the * operator
+    Matrix operator*(const Matrix &other) const {
         if (cols != other.rows) {
-        std::cerr << "Attempted to multiply matrices of incompatible dimensions: "
-                  << "(" << rows << "x" << cols << ") * (" 
-                  << other.rows << "x" << other.cols << ")" << std::endl;
-        throw std::invalid_argument("Matrix dimensions don't match for multiplication");
-    }
+            std::cerr << "Attempted to multiply matrices of incompatible dimensions: "
+                      << "(" << rows << "x" << cols << ") * ("
+                      << other.rows << "x" << other.cols << ")" << std::endl;
+            throw std::invalid_argument("Matrix dimensions don't match for multiplication");
+        }
         Matrix result(rows, other.cols);
         // weird loop order (k before j) makes more cache friendly
         for (size_t i = 0; i < rows; i++) {
@@ -133,7 +131,7 @@ public:
     }
 
     // element-wise addition
-    Matrix operator+(const Matrix& other) const {
+    Matrix operator+(const Matrix &other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for addition");
         }
@@ -146,8 +144,8 @@ public:
         return result;
     }
 
-    // element-wise subtraction 
-    Matrix operator-(const Matrix& other) const {
+    // element-wise subtraction
+    Matrix operator-(const Matrix &other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for subtraction");
         }
@@ -171,7 +169,7 @@ public:
         return result;
     }
 
-    // transpose 
+    // transpose
     Matrix transpose() const {
         Matrix result(cols, rows);
         for (size_t i = 0; i < rows; i++) {
@@ -183,7 +181,7 @@ public:
     }
 
     // hadamard producht
-    Matrix hadamard(const Matrix& other) const {
+    Matrix hadamard(const Matrix &other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for Hadamard product");
         }
@@ -208,7 +206,7 @@ public:
     }
 
     // applies a function to every element in the array - for passing in lambda functions and other callable objects
-    template<typename Func>
+    template <typename Func>
     Matrix apply(Func func) const {
         Matrix result(rows, cols);
         for (size_t i = 0; i < rows; i++) {
@@ -245,13 +243,13 @@ public:
 
 // layer class representing a single layer in the neural network
 class Layer {
-public:
+   public:
     Matrix weights;
     Matrix bias;
     std::string activation_function;
 
     // constructor: initializes parameters
-    Layer(size_t input_size, size_t output_size, std::string activation_function="sigmoid") 
+    Layer(size_t input_size, size_t output_size, std::string activation_function = "sigmoid")
         : weights(output_size, input_size),
           bias(output_size, 1),
           activation_function(activation_function) {
@@ -259,49 +257,43 @@ public:
     }
 
     // perform feedforward operation for this layer - returns the activations
-    Matrix feedforward(const Matrix& input) {
+    Matrix feedforward(const Matrix &input) {
         Matrix z = weights * input + bias;
         Matrix output(z.rows, z.cols);
         if (activation_function == "sigmoid") {
             output = z.apply(sigmoid);
-        }
-        else if (activation_function == "relu"){
+        } else if (activation_function == "relu") {
             output = z.apply(relu);
-        }
-        else if (activation_function == "softmax") {
+        } else if (activation_function == "softmax") {
             output = z.softmax();
-        }
-        else {
+        } else {
             throw std::runtime_error("no activation function found for layer");
         }
-        
+
         return output;
     }
 
     // perform feedforward operation for this layer - returns the activations AND PREACTIVATIONS for use in backpropagation
-    std::vector<Matrix> feedforward_backprop(const Matrix& input) {
+    std::vector<Matrix> feedforward_backprop(const Matrix &input) {
         Matrix z = weights * input + bias;
         Matrix output(z.rows, z.cols);
         if (activation_function == "sigmoid") {
             output = z.apply(sigmoid);
-        }
-        else if (activation_function == "relu"){
+        } else if (activation_function == "relu") {
             output = z.apply(relu);
-        }
-        else if (activation_function == "softmax") {
+        } else if (activation_function == "softmax") {
             output = z.softmax();
-        }
-        else {
+        } else {
             throw std::runtime_error("no activation function found for layer");
         }
-        
+
         return {output, z};
     }
 };
 
 // neural network class
 class NeuralNetwork {
-public:
+   public:
     std::vector<Layer> layers;  // vector to store all layers
     struct EvaluationMetrics {
         double accuracy;
@@ -311,45 +303,43 @@ public:
     };
 
     // constructor: create layers based on the given topology
-    NeuralNetwork(const std::vector<int>& topology, const std::vector<std::string> activation_functions = {}) {
-        if ((activation_functions.size() != topology.size()) and (activation_functions.size() != 0)) {
-            throw std::invalid_argument("the size of activations_functions vector must be the same size as topology");
-        }
-        else if (activation_functions.size() == 0) {
+    NeuralNetwork(const std::vector<int> &topology, const std::vector<std::string> activation_functions = {}) {
+        if ((activation_functions.size()+1 != topology.size()) and (activation_functions.size() != 0)) {
+            throw std::invalid_argument("the size of activations_functions vector must be the same size as no. layers (ex. input)");
+        } else if (activation_functions.size() == 0) {
             for (size_t i = 1; i < topology.size(); i++) {
                 // do not pass in specific activation function - use the default specified in the layer constructor
-                layers.emplace_back(topology[i-1], topology[i]);
+                layers.emplace_back(topology[i - 1], topology[i]);
             }
-        }
-        else {
+        } else {
             for (size_t i = 1; i < topology.size(); i++) {
-                layers.emplace_back(topology[i-1], topology[i], activation_functions[i]);
+                layers.emplace_back(topology[i - 1], topology[i], activation_functions[i-1]);
             }
         }
     }
 
     // perform feedforward operation through all layers
-    Matrix feedforward(const Matrix& input) {
+    Matrix feedforward(const Matrix &input) {
         Matrix current = input;
-        for (auto& layer : layers) {
+        for (auto &layer : layers) {
             current = layer.feedforward(current);
         }
         return current;
     }
 
     // calculates the error gradients in the parameters for a single training example
-    std::vector<std::vector<Matrix>> calculate_gradient(const Matrix& input, const Matrix& target) {
-        // Forward pass
+    std::vector<std::vector<Matrix>> calculate_gradient(const Matrix &input, const Matrix &target) {
+        // forward pass
         std::vector<Matrix> activations = {input};
         std::vector<Matrix> preactivations = {input};
 
-        for (auto& layer : layers) {
+        for (auto &layer : layers) {
             auto results = layer.feedforward_backprop(activations.back());
             activations.push_back(results[0]);
             preactivations.push_back(results[1]);
         }
 
-        // Backward pass
+        // backward pass
         int num_layers = layers.size();
         std::vector<Matrix> deltas;
         deltas.reserve(num_layers);
@@ -359,41 +349,34 @@ public:
         Matrix output_delta = activations.back() - target;
         if (layers.back().activation_function == "sigmoid") {
             output_delta = output_delta.hadamard(preactivations.back().apply(sigmoid_derivative));
-        }
-        else if (layers.back().activation_function == "relu") {
+        } else if (layers.back().activation_function == "relu") {
             output_delta = output_delta.hadamard(preactivations.back().apply(relu_derivative));
-        }
-        else if (layers.back().activation_function == "none" or layers.back().activation_function == "softmax") {
+        } else if (layers.back().activation_function == "none" or layers.back().activation_function == "softmax") {
             output_delta = output_delta;
-        }
-        else {
+        } else {
             throw std::runtime_error("Missing activation function during training");
         }
-        
 
         deltas.push_back(output_delta);
 
         // 2. Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
         for (int l = num_layers - 2; l >= 0; l--) {
-            Matrix delta = (layers[l+1].weights.transpose() * deltas.back());
+            Matrix delta = (layers[l + 1].weights.transpose() * deltas.back());
 
             if (layers[l].activation_function == "sigmoid") {
-                delta = delta.hadamard(preactivations[l+1].apply(sigmoid_derivative)); // l+1 as preactivation contains the input while layers does not
-            }
-            else if (layers[l].activation_function == "relu") {
-                delta = delta.hadamard(preactivations[l+1].apply(relu_derivative));
-            }
-            else if (layers[l].activation_function == "none") {
+                delta = delta.hadamard(preactivations[l + 1].apply(sigmoid_derivative));  // l+1 as preactivation contains the input while layers does not
+            } else if (layers[l].activation_function == "relu") {
+                delta = delta.hadamard(preactivations[l + 1].apply(relu_derivative));
+            } else if (layers[l].activation_function == "none") {
                 delta = delta;
-            }
-            else {
+            } else {
                 throw std::runtime_error("Missing activation function during training");
             }
 
             deltas.push_back(delta);
         }
 
-        // Reverse deltas to match layer order
+        // reverse deltas to match layer order
         std::reverse(deltas.begin(), deltas.end());
 
         // 3 & 4. calculate updates to weights and biases
@@ -404,12 +387,12 @@ public:
             Matrix weight_gradient = deltas[l] * activations[l].transpose();
             result.push_back({weight_gradient, deltas[l]});
         }
-        
+
         return result;
     }
 
     // adjusts parameters using already computed error gradients
-    void apply_adjustments(std::vector<std::vector<Matrix>>& gradients, double learning_rate) {
+    void apply_adjustments(std::vector<std::vector<Matrix>> &gradients, double learning_rate) {
         int num_layers = layers.size();
         for (int l = 0; l < num_layers; l++) {
             layers[l].weights = layers[l].weights - (gradients[l][0] * learning_rate);
@@ -418,17 +401,17 @@ public:
     }
 
     // averages a vector of parameter error gradients
-    std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>>& gradients) {
+    std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>> &gradients) {
         std::vector<std::vector<Matrix>> result;
         size_t no_layers = gradients[0].size();
         double no_examples = gradients.size();
 
-        for (size_t i = 0; i<no_layers; ++i){
+        for (size_t i = 0; i < no_layers; ++i) {
             auto layer = gradients[0][i];
             Matrix weight_average(layer[0].rows, layer[0].cols);
             Matrix bias_average(layer[1].rows, layer[1].cols);
 
-            for (auto& example_gradients : gradients) {
+            for (auto &example_gradients : gradients) {
                 weight_average = weight_average + example_gradients[i][0];
                 bias_average = bias_average + example_gradients[i][1];
             }
@@ -443,39 +426,39 @@ public:
     }
 
     // trains the neural network (multithreaded)
-    void train_mt(const std::vector<std::vector<Matrix>>& training_data, const std::vector<std::vector<Matrix>>& eval_data, int epochs, int batch_size, double learning_rate) {
+    void train_mt(const std::vector<std::vector<Matrix>> &training_data, const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size, double learning_rate) {
         if (training_data.empty() or training_data[0].size() != 2) {
             throw std::invalid_argument("Training data must be a non-empty vector of vectors, each containing an input and a target matrix.");
-        }     
-        
+        }
+
         unsigned int num_threads = std::thread::hardware_concurrency();
         std::vector<std::thread> threads(num_threads);
         std::vector<std::vector<std::vector<std::vector<Matrix>>>> thread_gradients(num_threads);
         std::mutex gradients_mutex;
         int counter = 0;
 
-        // Create a vector of indices
+        // create a vector of indices
         std::vector<size_t> indices(training_data.size());
         std::iota(indices.begin(), indices.end(), 0);
 
-        // Get a random seed
+        // get a random seed
         unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
         std::default_random_engine generator(seed);
 
         for (int epoch = 0; epoch < epochs; epoch++) {
-
             std::shuffle(indices.begin(), indices.end(), generator);
 
+            std::cout << "Epoch " << epoch + 1 << "\n";
+
             for (size_t batch_start = 0; batch_start < training_data.size(); batch_start += batch_size) {
-                
-                // Clear previous gradients
-                for (auto& grad : thread_gradients) {
+                // clear previous gradients
+                for (auto &grad : thread_gradients) {
                     grad.clear();
                 }
 
                 size_t current_batch_size = std::min(batch_size, static_cast<int>(training_data.size() - batch_start));
 
-                // Spawn threads - splits the batch up between the number of threads
+                // spawn threads - splits the batch up between the number of threads
                 for (unsigned int t = 0; t < num_threads; t++) {
                     threads[t] = std::thread([&, t, current_batch_size, batch_start]() {
                         size_t start = t * current_batch_size / num_threads;
@@ -497,47 +480,43 @@ public:
                         {
                             std::lock_guard<std::mutex> lock(gradients_mutex);
                             thread_gradients[t] = std::move(local_gradients);
-                        }
-                    });
+                        } });
                 }
 
-
-                // Join threads
-                for (auto& thread : threads) {
+                // join threads
+                for (auto &thread : threads) {
                     thread.join();
                 }
 
-
-                // Flatten gradients
+                // flatten gradients
                 std::vector<std::vector<std::vector<Matrix>>> batch_gradients;
-                for (const auto& thread_grad : thread_gradients) {
+                for (const auto &thread_grad : thread_gradients) {
                     batch_gradients.insert(batch_gradients.end(), thread_grad.begin(), thread_grad.end());
                 }
 
-
-                // Average gradients
+                // average gradients
                 auto avg_gradient = average_gradients(batch_gradients);
-                
 
-                // Apply gradients
+                // apply gradients
                 this->apply_adjustments(avg_gradient, learning_rate);
 
-                if (counter % 50 == 0) {
-                    auto eval_results = evaluate_nn(eval_data);
-                    std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
-                }
-                counter++;
+                // if (counter % 50 == 0) {
+                //     auto eval_results = evaluate_nn(eval_data);
+                //     std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
+                // }
+                // counter++;
             }
 
-            //todo ... print epoch results ...
+            auto eval_results = evaluate_nn(eval_data);
+            std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
         }
     }
 
     // gets the index of the maximum element in a nx1 matrix
-    size_t get_index_of_max_element_in_nx1_matrix(const Matrix& matrix) {
+    size_t get_index_of_max_element_in_nx1_matrix(const Matrix &matrix) {
         size_t index = 0;
         double max_value = matrix.data[0][0];
-        for (size_t i = 1; i<matrix.rows; ++i) {
+        for (size_t i = 1; i < matrix.rows; ++i) {
             if (matrix.data[i][0] > max_value) {
                 index = i;
                 max_value = matrix.data[i][0];
@@ -547,7 +526,7 @@ public:
     }
 
     // calculates the EvaluationMetrics on the inputted data
-    EvaluationMetrics evaluate_nn(const std::vector<std::vector<Matrix>>& test_data) {
+    EvaluationMetrics evaluate_nn(const std::vector<std::vector<Matrix>> &test_data) {
         if (test_data.empty() or test_data[0].size() != 2) {
             throw std::invalid_argument("Test data must be a non-empty vector of vectors, each containing an input and a target matrix.");
         }
@@ -556,13 +535,13 @@ public:
         int total_correct = 0;
         size_t total_examples = test_data.size();
 
-        for (const auto& example : test_data) {
-            const Matrix& input = example[0];
-            const Matrix& target = example[1];
+        for (const auto &example : test_data) {
+            const Matrix &input = example[0];
+            const Matrix &target = example[1];
 
             Matrix output = this->feedforward(input);
 
-            // Assuming output and target are nx1 matrices
+            // assuming output and target are nx1 matrices
             size_t predicted_class = get_index_of_max_element_in_nx1_matrix(output);
             size_t actual_class = get_index_of_max_element_in_nx1_matrix(target);
 
@@ -576,22 +555,117 @@ public:
         }
 
         double accuracy = static_cast<double>(total_correct) / total_examples;
-        
-        // Avoid division by zero
-        double precision = (true_positives + false_positives > 0) ? 
-                           static_cast<double>(true_positives) / (true_positives + false_positives) : 0.0;
-        double recall = (true_positives + false_negatives > 0) ? 
-                        static_cast<double>(true_positives) / (true_positives + false_negatives) : 0.0;
-        
-        double f1_score = (precision + recall > 0) ? 
-                          2 * (precision * recall) / (precision + recall) : 0.0;
+
+        // avoid division by zero
+        double precision = (true_positives + false_positives > 0) ? static_cast<double>(true_positives) / (true_positives + false_positives) : 0.0;
+        double recall = (true_positives + false_negatives > 0) ? static_cast<double>(true_positives) / (true_positives + false_negatives) : 0.0;
+
+        double f1_score = (precision + recall > 0) ? 2 * (precision * recall) / (precision + recall) : 0.0;
 
         return {accuracy, precision, recall, f1_score};
     }
+
+    // method to save the model
+    void save_model(const std::string &filename) const {
+        std::ofstream file(filename, std::ios::binary);
+        if (!file) {
+            throw std::runtime_error("Unable to open file for writing: " + filename);
+        }
+
+        uint32_t num_layers = static_cast<uint32_t>(layers.size());
+        file.write(reinterpret_cast<const char *>(&num_layers), sizeof(num_layers));
+
+        // first, write all layer information
+        for (size_t i = 0; i < layers.size(); ++i) {
+            const auto &layer = layers[i];
+            uint32_t input_size = static_cast<uint32_t>(layer.weights.cols);
+            uint32_t output_size = static_cast<uint32_t>(layer.weights.rows);
+
+            file.write(reinterpret_cast<const char *>(&input_size), sizeof(input_size));
+            file.write(reinterpret_cast<const char *>(&output_size), sizeof(output_size));
+
+            uint32_t activation_function_length = static_cast<uint32_t>(layer.activation_function.length());
+            file.write(reinterpret_cast<const char *>(&activation_function_length), sizeof(activation_function_length));
+            file.write(layer.activation_function.c_str(), activation_function_length);
+        }
+
+        // then, write all weights and biases
+        for (size_t i = 0; i < layers.size(); ++i) {
+            const auto &layer = layers[i];
+
+            for (const auto &row : layer.weights.data) {
+                file.write(reinterpret_cast<const char *>(row.data()), row.size() * sizeof(double));
+            }
+
+            for (const auto &row : layer.bias.data) {
+                file.write(reinterpret_cast<const char *>(row.data()), row.size() * sizeof(double));
+            }
+        }
+
+        std::cout << "Model saved successfully. File size: " << file.tellp() << " bytes" << std::endl;
+    }
+
+    static NeuralNetwork load_model(const std::string &filename) {
+        std::ifstream file(filename, std::ios::binary);
+        if (!file) {
+            throw std::runtime_error("Unable to open file for reading: " + filename);
+        }
+
+        uint32_t num_layers;
+        file.read(reinterpret_cast<char *>(&num_layers), sizeof(num_layers));
+
+        std::vector<int> topology;
+        std::vector<std::string> activation_functions;
+
+        // first, read all layer information
+        for (uint32_t i = 0; i < num_layers; ++i) {
+            uint32_t input_size, output_size;
+            file.read(reinterpret_cast<char *>(&input_size), sizeof(input_size));
+            file.read(reinterpret_cast<char *>(&output_size), sizeof(output_size));
+
+            if (i == 0) {
+                topology.push_back(input_size);
+            }
+            topology.push_back(output_size);
+
+            uint32_t activation_function_length;
+            file.read(reinterpret_cast<char *>(&activation_function_length), sizeof(activation_function_length));
+
+            std::string activation_function(activation_function_length, '\0');
+            file.read(&activation_function[0], activation_function_length);
+
+            activation_functions.push_back(activation_function);
+
+        }
+
+        // create the network with the loaded topology and activation functions
+        NeuralNetwork nn(topology, activation_functions);
+
+        // then, read all weights and biases
+        for (uint32_t i = 0; i < num_layers; ++i) {
+            auto &layer = nn.layers[i];
+
+            for (auto &row : layer.weights.data) {
+                file.read(reinterpret_cast<char *>(row.data()), row.size() * sizeof(double));
+            }
+
+            for (auto &row : layer.bias.data) {
+                file.read(reinterpret_cast<char *>(row.data()), row.size() * sizeof(double));
+            }
+
+        }
+
+        if (file.peek() != EOF) {
+            throw std::runtime_error("Unexpected data at end of file");
+        }
+
+        std::cout << "Model loaded successfully" << std::endl;
+        return nn;
+    }
 };
 
-// Mean Squared Error (MSE) loss function
-double mse_loss(const Matrix& predicted, const Matrix& target) {
+// mean Squared Error (MSE) loss function
+double mse_loss(const Matrix &predicted, const Matrix &target) {
     if (predicted.rows != target.rows or predicted.cols != target.cols) {
         throw std::invalid_argument("Dimensions of predicted and target matrices don't match");
     }
@@ -606,9 +680,7 @@ double mse_loss(const Matrix& predicted, const Matrix& target) {
     return sum / (predicted.rows * predicted.cols);
 }
 
-
 int main() {
-
     std::vector<std::vector<Matrix>> training_set;
     training_set.reserve(9000);
     std::vector<std::vector<Matrix>> eval_set;
@@ -619,32 +691,36 @@ int main() {
         std::string file_path = "mnist data/data" + std::to_string(i) + ".dat";
         std::vector<unsigned char> full_digit_data = read_file(file_path);
 
-        for (int j = 0; j < 784000; j += 28*28) { //todo make more general with training ratio
+        for (int j = 0; j < 784000; j += 28 * 28) {  // todo make more general with training ratio
             std::vector<std::vector<double>> image_data;
-                
-            for (int k=0; k<28*28; ++k){
-                double normalised_pixel = static_cast<double>(full_digit_data[j+k]) / 255.0;
+
+            for (int k = 0; k < 28 * 28; ++k) {
+                double normalised_pixel = static_cast<double>(full_digit_data[j + k]) / 255.0;
                 image_data.push_back({normalised_pixel});
             }
 
             // create the input matrix
-            Matrix input_data(28*28, 1);
+            Matrix input_data(28 * 28, 1);
             input_data.data = image_data;
 
             // create the label matrix
-            Matrix label_data(10,1);
+            Matrix label_data(10, 1);
             std::vector<std::vector<double>> data;
 
             // construct the label matrix with 1.0 in the postion of the digit and zeros elsewehre
-            for (size_t l = 0; l<i; ++l) {data.push_back({0.0});}
+            for (size_t l = 0; l < i; ++l) {
+                data.push_back({0.0});
+            }
             data.push_back({1.0});
-            for (size_t l = 0; l+i+1<10; ++l) {data.push_back({0.0});}
+            for (size_t l = 0; l + i + 1 < 10; ++l) {
+                data.push_back({0.0});
+            }
 
             label_data.data = data;
 
             // push both image and label into training_set
 
-            if (j<705600) {
+            if (j < 705600) {
                 training_set.push_back({input_data, label_data});
             } else {
                 eval_set.push_back({input_data, label_data});
@@ -653,9 +729,9 @@ int main() {
     }
 
     // create the neural network
-    int input_size = 28*28;
-    std::vector<int> topology = {input_size, 32, 10};
-    std::vector<std::string> activation_functions = {"none", "sigmoid", "softmax"};
+    int input_size = 28 * 28;
+    std::vector<int> topology = {input_size, 32, 32, 10};
+    std::vector<std::string> activation_functions = {"sigmoid", "sigmoid", "softmax"};
     NeuralNetwork nn(topology, activation_functions);
 
     int batch_size = 128;
@@ -664,6 +740,9 @@ int main() {
 
     // train the neural network
     nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate);
+    nn.save_model("mnist.model");
+
+    NeuralNetwork nn_1 = NeuralNetwork::load_model("mnist.model");
 
     return 0;
 }
