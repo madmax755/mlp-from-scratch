@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <string>
 #include <fstream>
+#include <thread>
+#include <mutex>
 
 
 // matrix class for handling matrix operations
@@ -77,9 +79,10 @@ public:
         throw std::invalid_argument("Matrix dimensions don't match for multiplication");
     }
         Matrix result(rows, other.cols);
+        // weird loop order (k before j) makes more cache friendly
         for (size_t i = 0; i < rows; i++) {
-            for (size_t j = 0; j < other.cols; j++) {
-                for (size_t k = 0; k < cols; k++) {
+            for (size_t k = 0; k < cols; k++) {
+                for (size_t j = 0; j < other.cols; j++) {
                     result.data[i][j] += data[i][k] * other.data[k][j];
                 }
             }
@@ -373,6 +376,106 @@ public:
             layers[l].bias = layers[l].bias - (gradients[l][1] * learning_rate);
         }
     }
+
+    std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>>& gradients) {
+        std::vector<std::vector<Matrix>> result;
+        size_t no_layers = gradients[0].size();
+        double no_examples = gradients.size();
+
+        for (size_t i = 0; i<no_layers; ++i){
+            auto layer = gradients[0][i];
+            Matrix weight_average(layer[0].rows, layer[0].cols);
+            Matrix bias_average(layer[1].rows, layer[1].cols);
+
+            for (auto& example_gradients : gradients) {
+                weight_average = weight_average + example_gradients[i][0];
+                bias_average = bias_average + example_gradients[i][1];
+            }
+
+            weight_average = weight_average.apply([no_examples](double x) { return x / no_examples; });
+            bias_average = bias_average.apply([no_examples](double x) { return x / no_examples; });
+
+            result.push_back({weight_average, bias_average});
+        }
+
+        return result;
+    }
+
+
+void train_mt(const std::vector<std::vector<Matrix>>& training_data, int epochs, int batch_size, double learning_rate) {
+        if (training_data.empty() || training_data[0].size() != 2) {
+            throw std::invalid_argument("Training data must be a non-empty vector of vectors, each containing an input and a target matrix.");
+        }        
+        
+        unsigned int num_threads = std::thread::hardware_concurrency();
+        std::vector<std::thread> threads(num_threads);
+        std::vector<std::vector<std::vector<std::vector<Matrix>>>> thread_gradients(num_threads);
+        std::mutex gradients_mutex;
+        std::mutex cout_mutex;
+
+        for (int epoch = 0; epoch < epochs; epoch++) {
+            for (size_t batch_start = 0; batch_start < training_data.size(); batch_start += batch_size) {
+                // Clear previous gradients
+                for (auto& grad : thread_gradients) {
+                    grad.clear();
+                }
+
+                size_t current_batch_size = std::min(batch_size, static_cast<int>(training_data.size() - batch_start));
+
+                // Spawn threads - splits the batch up between the number of threads
+                for (unsigned int t = 0; t < num_threads; t++) {
+                    threads[t] = std::thread([&, t, current_batch_size, batch_start]() {
+                        size_t start = t * current_batch_size / num_threads;
+                        size_t end = (t + 1) * current_batch_size / num_threads;
+                        
+                        std::vector<std::vector<std::vector<Matrix>>> local_gradients;
+                        for (size_t i = start; i < end; i++) {
+                            size_t index = batch_start + i;
+                            if (index < training_data.size()) {
+                                const auto& data_pair = training_data[index];
+                                const Matrix& input = data_pair[0];
+                                const Matrix& target = data_pair[1];
+
+                                auto gradient = this->calculate_gradient(input, target);
+                                local_gradients.push_back(gradient);
+                            }
+                        }                        
+                        {
+                            std::lock_guard<std::mutex> lock(gradients_mutex);
+                            thread_gradients[t] = std::move(local_gradients);
+                        }
+                        {
+                            std::lock_guard<std::mutex> lock(cout_mutex);
+                            std::cout << "Thread " << t << " completed" << std::endl;
+                        }
+                    });
+                }
+
+                // Join threads
+                for (auto& thread : threads) {
+                    thread.join();
+                }
+
+
+                // Flatten gradients
+                std::vector<std::vector<std::vector<Matrix>>> batch_gradients;
+                for (const auto& thread_grad : thread_gradients) {
+                    batch_gradients.insert(batch_gradients.end(), thread_grad.begin(), thread_grad.end());
+                }
+
+
+                // Average gradients
+                auto avg_gradient = average_gradients(batch_gradients);
+                
+
+                // Apply gradients
+                this->apply_adjustments(avg_gradient, learning_rate);
+                std::cout << "applied adjustments";
+            }
+
+            //todo ... print epoch results ...
+        }
+    }
 };
 
 
@@ -413,31 +516,6 @@ std::vector<unsigned char> read_file(const std::string& path) {
     }
 }
 
-
-
-std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>>& gradients) {
-    std::vector<std::vector<Matrix>> result;
-    size_t no_layers = gradients[0].size();
-    double no_examples = gradients.size();
-
-    for (size_t i = 0; i<no_layers; ++i){
-        auto layer = gradients[0][i];
-        Matrix weight_average(layer[0].rows, layer[0].cols);
-        Matrix bias_average(layer[1].rows, layer[1].cols);
-
-        for (auto& example_gradients : gradients) {
-            weight_average = weight_average + example_gradients[i][0];
-            bias_average = bias_average + example_gradients[i][1];
-        }
-
-        weight_average = weight_average.apply([no_examples](double x) { return x / no_examples; });
-        bias_average = bias_average.apply([no_examples](double x) { return x / no_examples; });
-
-        result.push_back({weight_average, bias_average});
-    }
-
-    return result;
-}
 
 
 
@@ -491,37 +569,9 @@ int main() {
     int no_examples = 9000;
     int batch_size = 90;
 
-    // Training loop
-    for (int epoch = 0; epoch < 10; epoch++) {
+    nn.train_mt(training_set, 10, 90, 0.1);
 
-        std::vector<std::vector<std::vector<Matrix>>> gradients;
-        gradients.reserve(batch_size);
-        for (int batch_no = 0; batch_no < no_examples/batch_size; ++batch_no) {
-
-            for (int i = 0; i < batch_size; ++i) {
-                Matrix input = training_set[batch_no*batch_size + i][0];
-                Matrix target = training_set[batch_no*batch_size + i][1];
-            
-                gradients.push_back(nn.calculate_gradient(input, target));
-            }
-
-            std::vector<std::vector<Matrix>> gradient = average_gradients(gradients);
-
-            nn.apply_adjustments(gradient, 0.1);
-            std::cout << "applied adjustments \n";
-
-            gradients.clear();
-        }
-
-
-        Matrix output = nn.feedforward(training_set[0][0]);
-        double loss = mse_loss(output, training_set[0][1]);
-        std::cout << "Epoch " << epoch << ", Loss: " << loss << "\n";
-    }
-
-    // // Final prediction
-    // Matrix final_output = nn.feedforward(input);
-    // std::cout << "Final Output: " << final_output.data[0][0] << "\n";
+    
 
     return 0;
 }
