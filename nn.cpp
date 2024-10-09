@@ -253,7 +253,13 @@ class Layer {
         : weights(output_size, input_size),
           bias(output_size, 1),
           activation_function(activation_function) {
-        weights.xavier_initialize();
+        if (activation_function == "sigmoid") {
+            weights.xavier_initialize();
+        } else if (activation_function == "relu"){
+            weights.he_initialise();
+        } else {
+            weights.uniform_initialise();
+        }
     }
 
     // perform feedforward operation for this layer - returns the activations
@@ -742,7 +748,6 @@ int main() {
     nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate);
     nn.save_model("mnist.model");
 
-    NeuralNetwork nn_1 = NeuralNetwork::load_model("mnist.model");
 
     return 0;
 }
