@@ -255,7 +255,7 @@ class Layer {
           activation_function(activation_function) {
         if (activation_function == "sigmoid") {
             weights.xavier_initialize();
-        } else if (activation_function == "relu"){
+        } else if (activation_function == "relu") {
             weights.he_initialise();
         } else {
             weights.uniform_initialise();
@@ -310,7 +310,7 @@ class NeuralNetwork {
 
     // constructor: create layers based on the given topology
     NeuralNetwork(const std::vector<int> &topology, const std::vector<std::string> activation_functions = {}) {
-        if ((activation_functions.size()+1 != topology.size()) and (activation_functions.size() != 0)) {
+        if ((activation_functions.size() + 1 != topology.size()) and (activation_functions.size() != 0)) {
             throw std::invalid_argument("the size of activations_functions vector must be the same size as no. layers (ex. input)");
         } else if (activation_functions.size() == 0) {
             for (size_t i = 1; i < topology.size(); i++) {
@@ -319,7 +319,7 @@ class NeuralNetwork {
             }
         } else {
             for (size_t i = 1; i < topology.size(); i++) {
-                layers.emplace_back(topology[i - 1], topology[i], activation_functions[i-1]);
+                layers.emplace_back(topology[i - 1], topology[i], activation_functions[i - 1]);
             }
         }
     }
@@ -398,12 +398,38 @@ class NeuralNetwork {
     }
 
     // adjusts parameters using already computed error gradients
-    void apply_adjustments(std::vector<std::vector<Matrix>> &gradients, double learning_rate) {
+    void apply_adjustments_gd(std::vector<std::vector<Matrix>> &gradients, double learning_rate) {
         int num_layers = layers.size();
         for (int l = 0; l < num_layers; l++) {
             layers[l].weights = layers[l].weights - (gradients[l][0] * learning_rate);
             layers[l].bias = layers[l].bias - (gradients[l][1] * learning_rate);
         }
+    }
+
+    std::vector<std::vector<Matrix>> apply_adjustments_gdm(std::vector<std::vector<Matrix>> &gradients, std::vector<std::vector<Matrix>> &prev_v, double learning_rate, double momentum_coeff) {
+        int num_layers = layers.size();
+        std::vector<std::vector<Matrix>> new_v;
+        new_v.reserve(gradients.size());
+
+        // handling the first call of this function where there is not a previous adjustment
+        if (!prev_v.empty()) {
+            for (int l = 0; l < num_layers; l++) {
+                Matrix v_weights = prev_v[l][0] * momentum_coeff - gradients[l][0] * learning_rate;
+                Matrix v_bias = prev_v[l][1] * momentum_coeff - gradients[l][1] * learning_rate;
+                layers[l].weights = layers[l].weights + v_weights;
+                layers[l].bias = layers[l].bias + v_bias;
+                new_v.push_back({v_weights, v_bias});
+            }
+        } else {
+            for (int l = 0; l < num_layers; l++) {
+                Matrix v_weights = (gradients[l][0] * learning_rate)*-1;
+                Matrix v_bias = (gradients[l][1] * learning_rate)*-1;
+                layers[l].weights = layers[l].weights + v_weights;
+                layers[l].bias = layers[l].bias + v_bias;
+                new_v.push_back({v_weights, v_bias});
+            }
+        }
+        return new_v;
     }
 
     // averages a vector of parameter error gradients
@@ -432,7 +458,7 @@ class NeuralNetwork {
     }
 
     // trains the neural network (multithreaded)
-    void train_mt(const std::vector<std::vector<Matrix>> &training_data, const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size, double learning_rate) {
+    void train_mt(const std::vector<std::vector<Matrix>> &training_data, const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size, double learning_rate, std::string training_algorithm = "sgd", double momentum_coefficient = 0.9) {
         if (training_data.empty() or training_data[0].size() != 2) {
             throw std::invalid_argument("Training data must be a non-empty vector of vectors, each containing an input and a target matrix.");
         }
@@ -442,6 +468,7 @@ class NeuralNetwork {
         std::vector<std::vector<std::vector<std::vector<Matrix>>>> thread_gradients(num_threads);
         std::mutex gradients_mutex;
         int counter = 0;
+        std::vector<std::vector<Matrix>> prev_adjustments;
 
         // create a vector of indices
         std::vector<size_t> indices(training_data.size());
@@ -504,7 +531,11 @@ class NeuralNetwork {
                 auto avg_gradient = average_gradients(batch_gradients);
 
                 // apply gradients
-                this->apply_adjustments(avg_gradient, learning_rate);
+                if (training_algorithm == "sgd") {
+                    this->apply_adjustments_gd(avg_gradient, learning_rate);
+                } else if (training_algorithm == "sgdm") {
+                    prev_adjustments = this->apply_adjustments_gdm(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
+                }
 
                 // if (counter % 50 == 0) {
                 //     auto eval_results = evaluate_nn(eval_data);
@@ -641,7 +672,6 @@ class NeuralNetwork {
             file.read(&activation_function[0], activation_function_length);
 
             activation_functions.push_back(activation_function);
-
         }
 
         // create the network with the loaded topology and activation functions
@@ -658,7 +688,6 @@ class NeuralNetwork {
             for (auto &row : layer.bias.data) {
                 file.read(reinterpret_cast<char *>(row.data()), row.size() * sizeof(double));
             }
-
         }
 
         if (file.peek() != EOF) {
@@ -741,13 +770,12 @@ int main() {
     NeuralNetwork nn(topology, activation_functions);
 
     int batch_size = 128;
-    int epochs = 10;
+    int epochs = 20;
     double learning_rate = 0.2;
 
     // train the neural network
-    nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate);
+    nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate, "sgdm", 0.9);
     nn.save_model("mnist.model");
-
 
     return 0;
 }
