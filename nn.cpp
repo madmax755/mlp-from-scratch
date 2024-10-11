@@ -333,8 +333,72 @@ class NeuralNetwork {
         return current;
     }
 
-    // calculates the error gradients in the parameters for a single training example
+    // calculates the error gradients in the parameters of NeuralNetwork::layers for a single training example
     std::vector<std::vector<Matrix>> calculate_gradient(const Matrix &input, const Matrix &target) {
+        // forward pass
+        std::vector<Matrix> activations = {input};
+        std::vector<Matrix> preactivations = {input};
+
+        for (auto &layer : layers) {
+            auto results = layer.feedforward_backprop(activations.back());
+            activations.push_back(results[0]);
+            preactivations.push_back(results[1]);
+        }
+
+        // backward pass
+        int num_layers = layers.size();
+        std::vector<Matrix> deltas;
+        deltas.reserve(num_layers);
+
+        // 1. Output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
+
+        Matrix output_delta = activations.back() - target;
+        if (layers.back().activation_function == "sigmoid") {
+            output_delta = output_delta.hadamard(preactivations.back().apply(sigmoid_derivative));
+        } else if (layers.back().activation_function == "relu") {
+            output_delta = output_delta.hadamard(preactivations.back().apply(relu_derivative));
+        } else if (layers.back().activation_function == "none" or layers.back().activation_function == "softmax") {
+            output_delta = output_delta;
+        } else {
+            throw std::runtime_error("Missing activation function during training");
+        }
+
+        deltas.push_back(output_delta);
+
+        // 2. Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
+        for (int l = num_layers - 2; l >= 0; l--) {
+            Matrix delta = (layers[l + 1].weights.transpose() * deltas.back());
+
+            if (layers[l].activation_function == "sigmoid") {
+                delta = delta.hadamard(preactivations[l + 1].apply(sigmoid_derivative));  // l+1 as preactivation contains the input while layers does not
+            } else if (layers[l].activation_function == "relu") {
+                delta = delta.hadamard(preactivations[l + 1].apply(relu_derivative));
+            } else if (layers[l].activation_function == "none") {
+                delta = delta;
+            } else {
+                throw std::runtime_error("Missing activation function during training");
+            }
+
+            deltas.push_back(delta);
+        }
+
+        // reverse deltas to match layer order
+        std::reverse(deltas.begin(), deltas.end());
+
+        // 3 & 4. calculate updates to weights and biases
+        std::vector<std::vector<Matrix>> result;
+        for (int l = 0; l < num_layers; l++) {
+            // ∂C/∂b^l = δ^l
+            // ∂C/∂w^l = δ^l (a^(l-1))^T
+            Matrix weight_gradient = deltas[l] * activations[l].transpose();
+            result.push_back({weight_gradient, deltas[l]});
+        }
+
+        return result;
+    }
+
+    // calculates the error gradients in the parameters of passed in layers for a single training example
+    std::vector<std::vector<Matrix>> calculate_gradient_custom(std::vector<Layer> layers, const Matrix &input, const Matrix &target) {
         // forward pass
         std::vector<Matrix> activations = {input};
         std::vector<Matrix> preactivations = {input};
@@ -422,12 +486,37 @@ class NeuralNetwork {
             }
         } else {
             for (int l = 0; l < num_layers; l++) {
-                Matrix v_weights = (gradients[l][0] * learning_rate)*-1;
-                Matrix v_bias = (gradients[l][1] * learning_rate)*-1;
+                Matrix v_weights = (gradients[l][0] * learning_rate) * -1;
+                Matrix v_bias = (gradients[l][1] * learning_rate) * -1;
                 layers[l].weights = layers[l].weights + v_weights;
                 layers[l].bias = layers[l].bias + v_bias;
                 new_v.push_back({v_weights, v_bias});
             }
+        }
+        return new_v;
+    }
+
+    // apply the calcluated parameter adjustments according to the nesterov accelerated gradient algorithm
+    std::vector<std::vector<Matrix>> apply_adjustments_nesterov(std::vector<std::vector<Matrix>> lookahead_gradients, std::vector<std::vector<Matrix>> &prev_v, double learning_rate, double momentum_coeff) {
+        int num_layers = layers.size();
+        std::vector<std::vector<Matrix>> new_v;
+        new_v.reserve(num_layers);
+
+        // apply updates and compute new velocities
+        for (int l = 0; l < num_layers; l++) {
+            Matrix v_weights = (lookahead_gradients[l][0] * learning_rate) * -1;
+            Matrix v_bias = (lookahead_gradients[l][1] * learning_rate) * -1;
+
+            if (!prev_v.empty()) {
+                v_weights = prev_v[l][0] * momentum_coeff + v_weights;
+                v_bias = prev_v[l][1] * momentum_coeff + v_bias;
+            }
+
+            // apply updates to parameters
+            layers[l].weights = layers[l].weights + v_weights;
+            layers[l].bias = layers[l].bias + v_bias;
+
+            new_v.push_back({v_weights, v_bias});
         }
         return new_v;
     }
@@ -493,7 +582,7 @@ class NeuralNetwork {
 
                 // spawn threads - splits the batch up between the number of threads
                 for (unsigned int t = 0; t < num_threads; t++) {
-                    threads[t] = std::thread([&, t, current_batch_size, batch_start]() {
+                    threads[t] = std::thread([&, t, current_batch_size, batch_start, prev_adjustments]() {
                         size_t start = t * current_batch_size / num_threads;
                         size_t end = (t + 1) * current_batch_size / num_threads;
                         
@@ -506,10 +595,28 @@ class NeuralNetwork {
                                 const Matrix& input = data_pair[0];
                                 const Matrix& target = data_pair[1];
 
-                                auto gradient = this->calculate_gradient(input, target);
-                                local_gradients.push_back(gradient);
+                                // nesterov requires a different place in parameter space to calculate the gradient from
+                                if (training_algorithm == "nesterov") {
+                                    // First, apply the look-ahead step
+                                    std::vector<Layer> tmp_layers = layers;
+                                    if (!prev_adjustments.empty()) {
+                                        for (int l = 0; l < tmp_layers.size(); l++) {
+                                            tmp_layers[l].weights = tmp_layers[l].weights + (prev_adjustments[l][0] * momentum_coefficient);
+                                            tmp_layers[l].bias = tmp_layers[l].bias + (prev_adjustments[l][1] * momentum_coefficient);
+                                        }
+                                    }
+                                    // now calculate gradients at the look-ahead position
+                                    auto lookahead_gradients = this->calculate_gradient_custom(tmp_layers, input, target);
+
+                                    local_gradients.push_back(lookahead_gradients);
+
+                                } else {
+                                    auto gradient = this->calculate_gradient(input, target);
+                                    local_gradients.push_back(gradient);
+                                }
+                                
                             }
-                        }                        
+                        }
                         {
                             std::lock_guard<std::mutex> lock(gradients_mutex);
                             thread_gradients[t] = std::move(local_gradients);
@@ -533,8 +640,10 @@ class NeuralNetwork {
                 // apply gradients
                 if (training_algorithm == "sgd") {
                     this->apply_adjustments_gd(avg_gradient, learning_rate);
-                } else if (training_algorithm == "sgdm") {
+                } else if (training_algorithm == "momentum") {
                     prev_adjustments = this->apply_adjustments_gdm(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
+                } else if (training_algorithm == "nesterov") {
+                    prev_adjustments = this->apply_adjustments_nesterov(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
                 }
 
                 // if (counter % 50 == 0) {
@@ -774,7 +883,7 @@ int main() {
     double learning_rate = 0.2;
 
     // train the neural network
-    nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate, "sgdm", 0.9);
+    nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate, "nesterov", 0.9);
     nn.save_model("mnist.model");
 
     return 0;
