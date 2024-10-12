@@ -383,6 +383,45 @@ class Optimiser {
     }
 };
 
+class SGDOptimizer : public Optimiser {
+   private:
+    double learning_rate;
+    std::vector<std::vector<Matrix>> velocity;
+
+   public:
+    SGDOptimizer(double lr = 0.1) : learning_rate(lr) {}
+
+    void initialize_velocity(const std::vector<Layer> &layers) {
+        velocity.clear();
+        for (const auto &layer : layers) {
+            velocity.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+        }
+    }
+
+    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+        if (velocity.empty()) {
+            initialize_velocity(layers);
+        }
+
+        // compute updates
+        std::vector<std::vector<Matrix>> update;
+        for (size_t l = 0; l < layers.size(); ++l) {
+            std::vector<Matrix> layer_update;
+            for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
+                velocity[l][i] = gradients[l][i].apply([this](double g) { return -g * learning_rate;});
+                layer_update.push_back(velocity[l][i]);
+            }
+            update.push_back(layer_update);
+        }
+
+        // apply updates
+        for (size_t l = 0; l < layers.size(); ++l) {
+            layers[l].weights = layers[l].weights + update[l][0];
+            layers[l].bias = layers[l].bias + update[l][1];
+        }
+    }
+};
+
 class SGDMomentumOptimizer : public Optimiser {
    private:
     double learning_rate;
@@ -467,7 +506,7 @@ class NeuralNetwork {
         return current;
     }
 
-    // calculates the error gradients in the parameters of NeuralNetwork::layers for a single training example
+    // calculates -gradthe error gradients in the parameters of NeuralNetwork::layers for a single training example
     std::vector<std::vector<Matrix>> calculate_gradient(const Matrix &input, const Matrix &target) {
         // forward pass
         std::vector<Matrix> activations = {input};
@@ -1144,7 +1183,7 @@ int main() {
     double momentum_coefficient = 0.9;
 
     // train the neural network
-    nn.set_optimiser(std::make_unique<SGDMomentumOptimizer>(learning_rate, momentum_coefficient));
+    nn.set_optimiser(std::make_unique<SGDOptimizer>(learning_rate));
     nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
