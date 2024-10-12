@@ -300,8 +300,8 @@ class Optimiser {
     virtual ~Optimiser() = default;
 
     // Helper function to calculate gradients for a single example
-    std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
-                                                        const Matrix &target) {
+    virtual std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
+                                                                const Matrix &target) {
         // Forward pass
         std::vector<Matrix> activations = {input};
         std::vector<Matrix> preactivations = {input};
@@ -383,13 +383,13 @@ class Optimiser {
     }
 };
 
-class SGDOptimizer : public Optimiser {
+class SGDOptimiser : public Optimiser {
    private:
     double learning_rate;
     std::vector<std::vector<Matrix>> velocity;
 
    public:
-    SGDOptimizer(double lr = 0.1) : learning_rate(lr) {}
+    SGDOptimiser(double lr = 0.1) : learning_rate(lr) {}
 
     void initialize_velocity(const std::vector<Layer> &layers) {
         velocity.clear();
@@ -403,33 +403,29 @@ class SGDOptimizer : public Optimiser {
             initialize_velocity(layers);
         }
 
-        // compute updates
+        // compute and apply updates
         std::vector<std::vector<Matrix>> update;
         for (size_t l = 0; l < layers.size(); ++l) {
             std::vector<Matrix> layer_update;
             for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
-                velocity[l][i] = gradients[l][i].apply([this](double g) { return -g * learning_rate;});
-                layer_update.push_back(velocity[l][i]);
+                // compute adjustment
+                velocity[l][i] = gradients[l][i]* -learning_rate;
             }
-            update.push_back(layer_update);
-        }
-
-        // apply updates
-        for (size_t l = 0; l < layers.size(); ++l) {
+            // apply adjustment
             layers[l].weights = layers[l].weights + update[l][0];
             layers[l].bias = layers[l].bias + update[l][1];
         }
     }
 };
 
-class SGDMomentumOptimizer : public Optimiser {
+class SGDMomentumOptimiser : public Optimiser {
    private:
     double learning_rate;
     double momentum;
     std::vector<std::vector<Matrix>> velocity;
 
    public:
-    SGDMomentumOptimizer(double lr = 0.1, double mom = 0.9) : learning_rate(lr), momentum(mom) {}
+    SGDMomentumOptimiser(double lr = 0.1, double mom = 0.9) : learning_rate(lr), momentum(mom) {}
 
     void initialize_velocity(const std::vector<Layer> &layers) {
         velocity.clear();
@@ -438,27 +434,74 @@ class SGDMomentumOptimizer : public Optimiser {
         }
     }
 
-    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+        void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (velocity.empty()) {
             initialize_velocity(layers);
         }
 
         // compute updates
-        std::vector<std::vector<Matrix>> update;
         for (size_t l = 0; l < layers.size(); ++l) {
-            std::vector<Matrix> layer_update;
             for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
-                velocity[l][i] = velocity[l][i].apply([this](double v) { return v * momentum; }) -
-                                 gradients[l][i].apply([this](double g) { return g * learning_rate; });
-                layer_update.push_back(velocity[l][i]);
+                // compute adjustments
+                velocity[l][i] = (velocity[l][i] * momentum) - (gradients[l][i] * learning_rate);
             }
-            update.push_back(layer_update);
+            // apply adjustments
+            layers[l].weights = layers[l].weights + velocity[l][0];
+            layers[l].bias = layers[l].bias + velocity[l][1];
+        }
+    }
+};
+
+class NesterovMomentumOptimiser : public Optimiser {
+   private:
+    double learning_rate;
+    double momentum;
+    std::vector<std::vector<Matrix>> velocity;
+
+   public:
+    NesterovMomentumOptimiser(double lr = 0.1, double mom = 0.9) : learning_rate(lr), momentum(mom) {}
+
+    void initialize_velocity(const std::vector<Layer> &layers) {
+        velocity.clear();
+        for (const auto &layer : layers) {
+            velocity.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+        }
+    }
+
+    std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
+                                                        const Matrix &target) override {
+
+        // get lookahead position
+        std::vector<Layer> tmp_layers = layers;
+        if (velocity.empty()) {
+            initialize_velocity(tmp_layers);
+        } else {
+            for (int l = 0; l < tmp_layers.size(); l++) {
+                tmp_layers[l].weights = tmp_layers[l].weights + (velocity[l][0] * momentum);
+                tmp_layers[l].bias = tmp_layers[l].bias + (velocity[l][1] * momentum);
+            }
         }
 
-        // apply updates
+        // compute gradient at lookahead position
+        auto gradients = Optimiser::calculate_gradient(tmp_layers, input, target);
+
+        return gradients;
+    }
+
+    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+        if (velocity.empty()) {
+            initialize_velocity(layers);
+        }
+
+        // compute and apply updates
         for (size_t l = 0; l < layers.size(); ++l) {
-            layers[l].weights = layers[l].weights + update[l][0];
-            layers[l].bias = layers[l].bias + update[l][1];
+            for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
+                // compute adjustments
+                velocity[l][i] = (velocity[l][i] * momentum) - (gradients[l][i] * learning_rate);
+            }
+            // apply updates
+            layers[l].weights = layers[l].weights + velocity[l][0];
+            layers[l].bias = layers[l].bias + velocity[l][1];
         }
     }
 };
@@ -845,7 +888,7 @@ class NeuralNetwork {
         }
     }
 
-    void set_optimiser(std::unique_ptr<Optimiser> new_optimizer) { optimiser = std::move(new_optimizer); }
+    void set_optimiser(std::unique_ptr<Optimiser> new_optimiser) { optimiser = std::move(new_optimiser); }
 
     void train_mt_optimiser(const std::vector<std::vector<Matrix>> &training_data,
                             const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size) {
@@ -1180,10 +1223,10 @@ int main() {
     int batch_size = 128;
     int epochs = 20;
     double learning_rate = 0.1;
-    double momentum_coefficient = 0.9;
+    double momentum_coefficient = 0.8;
 
     // train the neural network
-    nn.set_optimiser(std::make_unique<SGDOptimizer>(learning_rate));
+    nn.set_optimiser(std::make_unique<NesterovMomentumOptimiser>(learning_rate, momentum_coefficient));
     nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
