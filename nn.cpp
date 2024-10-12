@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -12,9 +13,7 @@
 #include <vector>
 
 // sigmoid activation function
-double sigmoid(double x) {
-    return 1.0 / (1.0 + std::exp(-x));
-}
+double sigmoid(double x) { return 1.0 / (1.0 + std::exp(-x)); }
 
 // sigmoid derivative
 double sigmoid_derivative(double x) {
@@ -23,14 +22,10 @@ double sigmoid_derivative(double x) {
 }
 
 // relu activation function
-double relu(double x) {
-    return std::max(x, 0.0);
-}
+double relu(double x) { return std::max(x, 0.0); }
 
 // relu derivative
-double relu_derivative(double x) {
-    return (x > 0) ? x : 0.0;
-}
+double relu_derivative(double x) { return (x > 0) ? x : 0.0; }
 
 // read binary file into a vector
 std::vector<unsigned char> read_file(const std::string &path) {
@@ -60,7 +55,8 @@ class Matrix {
 
     // constructor: initialize matrix with given dimensions
     Matrix(size_t rows, size_t cols) : rows(rows), cols(cols) {
-        data.resize(rows, std::vector<double>(cols, 0.0));  // resise the data vector to have 'rows' elements with a vector as the value
+        data.resize(rows,
+                    std::vector<double>(cols, 0.0));  // resise the data vector to have 'rows' elements with a vector as the value
     }
 
     // initialize matrix with random values between -1 and 1
@@ -114,8 +110,7 @@ class Matrix {
     Matrix operator*(const Matrix &other) const {
         if (cols != other.rows) {
             std::cerr << "Attempted to multiply matrices of incompatible dimensions: "
-                      << "(" << rows << "x" << cols << ") * ("
-                      << other.rows << "x" << other.cols << ")" << std::endl;
+                      << "(" << rows << "x" << cols << ") * (" << other.rows << "x" << other.cols << ")" << std::endl;
             throw std::invalid_argument("Matrix dimensions don't match for multiplication");
         }
         Matrix result(rows, other.cols);
@@ -250,9 +245,7 @@ class Layer {
 
     // constructor: initializes parameters
     Layer(size_t input_size, size_t output_size, std::string activation_function = "sigmoid")
-        : weights(output_size, input_size),
-          bias(output_size, 1),
-          activation_function(activation_function) {
+        : weights(output_size, input_size), bias(output_size, 1), activation_function(activation_function) {
         if (activation_function == "sigmoid") {
             weights.xavier_initialize();
         } else if (activation_function == "relu") {
@@ -280,7 +273,7 @@ class Layer {
     }
 
     // perform feedforward operation for this layer - returns the activations AND PREACTIVATIONS for use in backpropagation
-    std::vector<Matrix> feedforward_backprop(const Matrix &input) {
+    std::vector<Matrix> feedforward_backprop(const Matrix &input) const {
         Matrix z = weights * input + bias;
         Matrix output(z.rows, z.cols);
         if (activation_function == "sigmoid") {
@@ -297,10 +290,149 @@ class Layer {
     }
 };
 
+// base Optimiser class
+class Optimiser {
+   public:
+    // requires implementation in child classes
+    virtual void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) = 0;
+
+    // set destructor to default
+    virtual ~Optimiser() = default;
+
+    // Helper function to calculate gradients for a single example
+    std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
+                                                        const Matrix &target) {
+        // Forward pass
+        std::vector<Matrix> activations = {input};
+        std::vector<Matrix> preactivations = {input};
+
+        for (const auto &layer : layers) {
+            auto results = layer.feedforward_backprop(activations.back());
+            activations.push_back(results[0]);
+            preactivations.push_back(results[1]);
+        }
+
+        // Backward pass
+        int num_layers = layers.size();
+        std::vector<Matrix> deltas;
+        deltas.reserve(num_layers);
+
+        // Output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
+        Matrix output_delta = activations.back() - target;
+        if (layers.back().activation_function == "sigmoid") {
+            output_delta = output_delta.hadamard(preactivations.back().apply(sigmoid_derivative));
+        } else if (layers.back().activation_function == "relu") {
+            output_delta = output_delta.hadamard(preactivations.back().apply(relu_derivative));
+        } else if (layers.back().activation_function == "softmax" or layers.back().activation_function == "none") {
+            // For softmax and none, the delta is already correct (assuming cross-entropy loss)
+        } else {
+            throw std::runtime_error("Unsupported activation function");
+        }
+        deltas.push_back(output_delta);
+
+        // Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
+        for (int l = num_layers - 2; l >= 0; --l) {
+            Matrix delta = (layers[l + 1].weights.transpose() * deltas.back());
+            if (layers[l].activation_function == "sigmoid") {
+                delta = delta.hadamard(preactivations[l + 1].apply(sigmoid_derivative));
+            } else if (layers[l].activation_function == "relu") {
+                delta = delta.hadamard(preactivations[l + 1].apply(relu_derivative));
+            } else if (layers[l].activation_function == "none") {
+                // delta = delta
+            } else {
+                throw std::runtime_error("Unsupported activation function");
+            }
+            deltas.push_back(delta);
+        }
+
+        // reverse deltas to match layer order
+        std::reverse(deltas.begin(), deltas.end());
+
+        // Calculate gradients
+        std::vector<std::vector<Matrix>> gradients;
+        for (int l = 0; l < num_layers; ++l) {
+            Matrix weight_gradient = deltas[l] * activations[l].transpose();
+            gradients.push_back({weight_gradient, deltas[l]});
+        }
+
+        return gradients;
+    }
+
+    // Helper function to average gradients
+    std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>> &batch_gradients) {
+        std::vector<std::vector<Matrix>> avg_gradients;
+        size_t num_layers = batch_gradients[0].size();
+        size_t batch_size = batch_gradients.size();
+
+        for (size_t l = 0; l < num_layers; ++l) {
+            Matrix avg_weight_grad(batch_gradients[0][l][0].rows, batch_gradients[0][l][0].cols);
+            Matrix avg_bias_grad(batch_gradients[0][l][1].rows, batch_gradients[0][l][1].cols);
+
+            for (const auto &example_gradients : batch_gradients) {
+                avg_weight_grad = avg_weight_grad + example_gradients[l][0];
+                avg_bias_grad = avg_bias_grad + example_gradients[l][1];
+            }
+
+            avg_weight_grad = avg_weight_grad * (1.0 / batch_size);
+            avg_bias_grad = avg_bias_grad * (1.0 / batch_size);
+
+            avg_gradients.push_back({avg_weight_grad, avg_bias_grad});
+        }
+
+        return avg_gradients;
+    }
+};
+
+class SGDMomentumOptimizer : public Optimiser {
+   private:
+    double learning_rate;
+    double momentum;
+    std::vector<std::vector<Matrix>> velocity;
+
+   public:
+    SGDMomentumOptimizer(double lr = 0.1, double mom = 0.9) : learning_rate(lr), momentum(mom) {}
+
+    void initialize_velocity(const std::vector<Layer> &layers) {
+        velocity.clear();
+        for (const auto &layer : layers) {
+            velocity.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+        }
+    }
+
+    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+        if (velocity.empty()) {
+            initialize_velocity(layers);
+        }
+
+        // compute updates
+        std::vector<std::vector<Matrix>> update;
+        for (size_t l = 0; l < layers.size(); ++l) {
+            std::vector<Matrix> layer_update;
+            for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
+                velocity[l][i] = velocity[l][i].apply([this](double v) { return v * momentum; }) -
+                                 gradients[l][i].apply([this](double g) { return g * learning_rate; });
+                layer_update.push_back(velocity[l][i]);
+            }
+            update.push_back(layer_update);
+        }
+
+        // apply updates
+        for (size_t l = 0; l < layers.size(); ++l) {
+            layers[l].weights = layers[l].weights + update[l][0];
+            layers[l].bias = layers[l].bias + update[l][1];
+        }
+    }
+};
+
 // neural network class
 class NeuralNetwork {
    public:
-    std::vector<Layer> layers;  // vector to store all layers
+    // todo make these private - check if nothing breaks
+    std::vector<Layer> layers;
+    std::unique_ptr<Optimiser> optimiser;
+    // have to use a pointer otherwise class cannot be constructed (mutex is not moveable/copyable etc.)
+    std::unique_ptr<std::mutex> layers_mutex;
+
     struct EvaluationMetrics {
         double accuracy;
         double precision;
@@ -309,9 +441,11 @@ class NeuralNetwork {
     };
 
     // constructor: create layers based on the given topology
-    NeuralNetwork(const std::vector<int> &topology, const std::vector<std::string> activation_functions = {}) {
+    NeuralNetwork(const std::vector<int> &topology, const std::vector<std::string> activation_functions = {})
+        : layers_mutex(std::make_unique<std::mutex>()) {
         if ((activation_functions.size() + 1 != topology.size()) and (activation_functions.size() != 0)) {
-            throw std::invalid_argument("the size of activations_functions vector must be the same size as no. layers (ex. input)");
+            throw std::invalid_argument(
+                "the size of activations_functions vector must be the same size as no. layers (ex. input)");
         } else if (activation_functions.size() == 0) {
             for (size_t i = 1; i < topology.size(); i++) {
                 // do not pass in specific activation function - use the default specified in the layer constructor
@@ -370,7 +504,8 @@ class NeuralNetwork {
             Matrix delta = (layers[l + 1].weights.transpose() * deltas.back());
 
             if (layers[l].activation_function == "sigmoid") {
-                delta = delta.hadamard(preactivations[l + 1].apply(sigmoid_derivative));  // l+1 as preactivation contains the input while layers does not
+                delta = delta.hadamard(preactivations[l + 1].apply(
+                    sigmoid_derivative));  // l+1 as preactivation contains the input while layers does not
             } else if (layers[l].activation_function == "relu") {
                 delta = delta.hadamard(preactivations[l + 1].apply(relu_derivative));
             } else if (layers[l].activation_function == "none") {
@@ -398,7 +533,8 @@ class NeuralNetwork {
     }
 
     // calculates the error gradients in the parameters of passed in layers for a single training example
-    std::vector<std::vector<Matrix>> calculate_gradient_custom(std::vector<Layer> layers, const Matrix &input, const Matrix &target) {
+    std::vector<std::vector<Matrix>> calculate_gradient_custom(const std::vector<Layer> layers, const Matrix &input,
+                                                               const Matrix &target) {
         // forward pass
         std::vector<Matrix> activations = {input};
         std::vector<Matrix> preactivations = {input};
@@ -434,7 +570,8 @@ class NeuralNetwork {
             Matrix delta = (layers[l + 1].weights.transpose() * deltas.back());
 
             if (layers[l].activation_function == "sigmoid") {
-                delta = delta.hadamard(preactivations[l + 1].apply(sigmoid_derivative));  // l+1 as preactivation contains the input while layers does not
+                delta = delta.hadamard(preactivations[l + 1].apply(
+                    sigmoid_derivative));  // l+1 as preactivation contains the input while layers does not
             } else if (layers[l].activation_function == "relu") {
                 delta = delta.hadamard(preactivations[l + 1].apply(relu_derivative));
             } else if (layers[l].activation_function == "none") {
@@ -470,7 +607,9 @@ class NeuralNetwork {
         }
     }
 
-    std::vector<std::vector<Matrix>> apply_adjustments_gdm(std::vector<std::vector<Matrix>> &gradients, std::vector<std::vector<Matrix>> &prev_v, double learning_rate, double momentum_coeff) {
+    std::vector<std::vector<Matrix>> apply_adjustments_gdm(std::vector<std::vector<Matrix>> &gradients,
+                                                           std::vector<std::vector<Matrix>> &prev_v, double learning_rate,
+                                                           double momentum_coeff) {
         int num_layers = layers.size();
         std::vector<std::vector<Matrix>> new_v;
         new_v.reserve(gradients.size());
@@ -497,7 +636,9 @@ class NeuralNetwork {
     }
 
     // apply the calcluated parameter adjustments according to the nesterov accelerated gradient algorithm
-    std::vector<std::vector<Matrix>> apply_adjustments_nesterov(std::vector<std::vector<Matrix>> lookahead_gradients, std::vector<std::vector<Matrix>> &prev_v, double learning_rate, double momentum_coeff) {
+    std::vector<std::vector<Matrix>> apply_adjustments_nesterov(std::vector<std::vector<Matrix>> lookahead_gradients,
+                                                                std::vector<std::vector<Matrix>> &prev_v, double learning_rate,
+                                                                double momentum_coeff) {
         int num_layers = layers.size();
         std::vector<std::vector<Matrix>> new_v;
         new_v.reserve(num_layers);
@@ -547,9 +688,12 @@ class NeuralNetwork {
     }
 
     // trains the neural network (multithreaded)
-    void train_mt(const std::vector<std::vector<Matrix>> &training_data, const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size, double learning_rate, std::string training_algorithm = "sgd", double momentum_coefficient = 0.9) {
+    void train_mt(const std::vector<std::vector<Matrix>> &training_data, const std::vector<std::vector<Matrix>> &eval_data,
+                  int epochs, int batch_size, double learning_rate, std::string training_algorithm = "sgd",
+                  double momentum_coefficient = 0.9) {
         if (training_data.empty() or training_data[0].size() != 2) {
-            throw std::invalid_argument("Training data must be a non-empty vector of vectors, each containing an input and a target matrix.");
+            throw std::invalid_argument(
+                "Training data must be a non-empty vector of vectors, each containing an input and a target matrix.");
         }
 
         unsigned int num_threads = std::thread::hardware_concurrency();
@@ -585,24 +729,26 @@ class NeuralNetwork {
                     threads[t] = std::thread([&, t, current_batch_size, batch_start, prev_adjustments]() {
                         size_t start = t * current_batch_size / num_threads;
                         size_t end = (t + 1) * current_batch_size / num_threads;
-                        
+
                         std::vector<std::vector<std::vector<Matrix>>> local_gradients;
-                        local_gradients.reserve(end-start);
+                        local_gradients.reserve(end - start);
                         for (size_t i = start; i < end; i++) {
                             size_t index = indices[batch_start + i];
                             if (index < training_data.size()) {
-                                const auto& data_pair = training_data[index];
-                                const Matrix& input = data_pair[0];
-                                const Matrix& target = data_pair[1];
+                                const auto &data_pair = training_data[index];
+                                const Matrix &input = data_pair[0];
+                                const Matrix &target = data_pair[1];
 
                                 // nesterov requires a different place in parameter space to calculate the gradient from
                                 if (training_algorithm == "nesterov") {
-                                    // First, apply the look-ahead step
+                                    // first, apply the look-ahead step
                                     std::vector<Layer> tmp_layers = layers;
                                     if (!prev_adjustments.empty()) {
                                         for (int l = 0; l < tmp_layers.size(); l++) {
-                                            tmp_layers[l].weights = tmp_layers[l].weights + (prev_adjustments[l][0] * momentum_coefficient);
-                                            tmp_layers[l].bias = tmp_layers[l].bias + (prev_adjustments[l][1] * momentum_coefficient);
+                                            tmp_layers[l].weights =
+                                                tmp_layers[l].weights + (prev_adjustments[l][0] * momentum_coefficient);
+                                            tmp_layers[l].bias =
+                                                tmp_layers[l].bias + (prev_adjustments[l][1] * momentum_coefficient);
                                         }
                                     }
                                     // now calculate gradients at the look-ahead position
@@ -614,13 +760,13 @@ class NeuralNetwork {
                                     auto gradient = this->calculate_gradient(input, target);
                                     local_gradients.push_back(gradient);
                                 }
-                                
                             }
                         }
                         {
                             std::lock_guard<std::mutex> lock(gradients_mutex);
                             thread_gradients[t] = std::move(local_gradients);
-                        } });
+                        }
+                    });
                 }
 
                 // join threads
@@ -641,9 +787,11 @@ class NeuralNetwork {
                 if (training_algorithm == "sgd") {
                     this->apply_adjustments_gd(avg_gradient, learning_rate);
                 } else if (training_algorithm == "momentum") {
-                    prev_adjustments = this->apply_adjustments_gdm(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
+                    prev_adjustments =
+                        this->apply_adjustments_gdm(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
                 } else if (training_algorithm == "nesterov") {
-                    prev_adjustments = this->apply_adjustments_nesterov(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
+                    prev_adjustments =
+                        this->apply_adjustments_nesterov(avg_gradient, prev_adjustments, learning_rate, momentum_coefficient);
                 }
 
                 // if (counter % 50 == 0) {
@@ -653,6 +801,113 @@ class NeuralNetwork {
                 // counter++;
             }
 
+            auto eval_results = evaluate_nn(eval_data);
+            std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
+        }
+    }
+
+    void set_optimiser(std::unique_ptr<Optimiser> new_optimizer) { optimiser = std::move(new_optimizer); }
+
+    void train_mt_optimiser(const std::vector<std::vector<Matrix>> &training_data,
+                            const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size) {
+        unsigned int num_threads = std::thread::hardware_concurrency();
+        std::vector<std::thread> threads(num_threads);
+        std::vector<std::vector<std::vector<std::vector<Matrix>>>> thread_gradients(num_threads);
+        std::mutex gradients_mutex;
+        int counter = 0;
+
+        // Create a vector of indices
+        std::vector<size_t> indices(training_data.size());
+        std::iota(indices.begin(), indices.end(), 0);
+
+        // Random number generator
+        std::random_device rd;
+        std::mt19937 generator(rd());
+
+        // iterate through epochs
+        for (int epoch = 0; epoch < epochs; epoch++) {
+            std::shuffle(indices.begin(), indices.end(), generator);
+
+            std::cout << "Epoch " << epoch + 1 << "\n";
+
+            // iterate through batches
+            for (size_t batch_start = 0; batch_start < training_data.size(); batch_start += batch_size) {
+                // clear previous gradients
+                for (auto &grad : thread_gradients) {
+                    grad.clear();
+                }
+
+                size_t current_batch_size = std::min(batch_size, static_cast<int>(training_data.size() - batch_start));
+
+                // spawn threads - splits the batch up between the number of threads
+                for (unsigned int t = 0; t < num_threads; t++) {
+                    threads[t] = std::thread([&, t, current_batch_size, batch_start]() {
+                        size_t start = t * current_batch_size / num_threads;
+                        size_t end = (t + 1) * current_batch_size / num_threads;
+
+                        std::vector<std::vector<std::vector<Matrix>>> local_gradients;
+                        local_gradients.reserve(end - start);
+                        for (size_t i = start; i < end; i++) {
+                            size_t index = indices[batch_start + i];
+                            if (index < training_data.size()) {
+                                const auto &data_pair = training_data[index];
+                                const Matrix &input = data_pair[0];
+                                const Matrix &target = data_pair[1];
+
+                                // // nesterov requires a different place in parameter space to calculate the gradient from
+                                // if (training_algorithm == "nesterov") {
+                                //     // first, apply the look-ahead step
+                                //     std::vector<Layer> tmp_layers = layers;
+                                //     if (!prev_adjustments.empty()) {
+                                //         for (int l = 0; l < tmp_layers.size(); l++) {
+                                //             tmp_layers[l].weights =
+                                //                 tmp_layers[l].weights + (prev_adjustments[l][0] * momentum_coefficient);
+                                //             tmp_layers[l].bias =
+                                //                 tmp_layers[l].bias + (prev_adjustments[l][1] * momentum_coefficient);
+                                //         }
+                                //     }
+                                //     // now calculate gradients at the look-ahead position
+                                //     auto lookahead_gradients = this->calculate_gradient_custom(tmp_layers, input, target);
+
+                                //     local_gradients.push_back(lookahead_gradients);
+
+                                // } else {
+                                auto gradient = optimiser->calculate_gradient(layers, input, target);
+                                local_gradients.push_back(gradient);
+                                // }
+                            }
+
+                            {
+                                std::lock_guard<std::mutex> lock(gradients_mutex);
+                                thread_gradients[t] = std::move(local_gradients);
+                            }
+                        }
+                    });
+                }
+
+                // join threads
+                for (auto &thread : threads) {
+                    thread.join();
+                }
+
+                // flatten gradients
+                std::vector<std::vector<std::vector<Matrix>>> batch_gradients;
+                for (const auto &thread_grad : thread_gradients) {
+                    batch_gradients.insert(batch_gradients.end(), thread_grad.begin(), thread_grad.end());
+                }
+
+                // average gradients
+                auto avg_gradient = optimiser->average_gradients(batch_gradients);
+
+                // apply gradients
+                optimiser->compute_and_apply_updates(layers, avg_gradient);
+
+                // if (counter % 50 == 0) {
+                //     auto eval_results = evaluate_nn(eval_data);
+                //     std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
+                // }
+                // counter++;
+            }
             auto eval_results = evaluate_nn(eval_data);
             std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
         }
@@ -674,7 +929,8 @@ class NeuralNetwork {
     // calculates the EvaluationMetrics on the inputted data
     EvaluationMetrics evaluate_nn(const std::vector<std::vector<Matrix>> &test_data) {
         if (test_data.empty() or test_data[0].size() != 2) {
-            throw std::invalid_argument("Test data must be a non-empty vector of vectors, each containing an input and a target matrix.");
+            throw std::invalid_argument(
+                "Test data must be a non-empty vector of vectors, each containing an input and a target matrix.");
         }
 
         int true_positives = 0, false_positives = 0, false_negatives = 0;
@@ -703,8 +959,12 @@ class NeuralNetwork {
         double accuracy = static_cast<double>(total_correct) / total_examples;
 
         // avoid division by zero
-        double precision = (true_positives + false_positives > 0) ? static_cast<double>(true_positives) / (true_positives + false_positives) : 0.0;
-        double recall = (true_positives + false_negatives > 0) ? static_cast<double>(true_positives) / (true_positives + false_negatives) : 0.0;
+        double precision = (true_positives + false_positives > 0)
+                               ? static_cast<double>(true_positives) / (true_positives + false_positives)
+                               : 0.0;
+        double recall = (true_positives + false_negatives > 0)
+                            ? static_cast<double>(true_positives) / (true_positives + false_negatives)
+                            : 0.0;
 
         double f1_score = (precision + recall > 0) ? 2 * (precision * recall) / (precision + recall) : 0.0;
 
@@ -880,10 +1140,12 @@ int main() {
 
     int batch_size = 128;
     int epochs = 20;
-    double learning_rate = 0.2;
+    double learning_rate = 0.1;
+    double momentum_coefficient = 0.9;
 
     // train the neural network
-    nn.train_mt(training_set, eval_set, epochs, batch_size, learning_rate, "nesterov", 0.9);
+    nn.set_optimiser(std::make_unique<SGDMomentumOptimizer>(learning_rate, momentum_coefficient));
+    nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
     return 0;
