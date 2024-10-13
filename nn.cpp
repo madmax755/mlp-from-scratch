@@ -407,7 +407,7 @@ class SGDOptimiser : public Optimiser {
         for (size_t l = 0; l < layers.size(); ++l) {
             for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
                 // compute adjustment
-                velocity[l][i] = gradients[l][i]* -learning_rate;
+                velocity[l][i] = gradients[l][i] * -learning_rate;
             }
             // apply adjustment
             layers[l].weights = layers[l].weights + velocity[l][0];
@@ -432,7 +432,7 @@ class SGDMomentumOptimiser : public Optimiser {
         }
     }
 
-        void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (velocity.empty()) {
             initialize_velocity(layers);
         }
@@ -468,7 +468,6 @@ class NesterovMomentumOptimiser : public Optimiser {
 
     std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
                                                         const Matrix &target) override {
-
         // get lookahead position
         std::vector<Layer> tmp_layers = layers;
         if (velocity.empty()) {
@@ -500,6 +499,64 @@ class NesterovMomentumOptimiser : public Optimiser {
             // apply updates
             layers[l].weights = layers[l].weights + velocity[l][0];
             layers[l].bias = layers[l].bias + velocity[l][1];
+        }
+    }
+};
+
+class AdamOptimiser : public Optimiser {
+   private:
+    double learning_rate;
+    double beta1;
+    double beta2;
+    double epsilon;
+    int t;                               // timestep
+    std::vector<std::vector<Matrix>> m;  // first moment
+    std::vector<std::vector<Matrix>> v;  // second moment
+
+   public:
+    AdamOptimiser(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8)
+        : learning_rate(lr), beta1(b1), beta2(b2), epsilon(eps), t(0) {}
+
+    void initialize_moments(const std::vector<Layer> &layers) {
+        m.clear();
+        v.clear();
+        for (const auto &layer : layers) {
+            m.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+            v.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+        }
+    }
+
+    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+        if (m.empty() or v.empty()) {
+            initialize_moments(layers);
+        }
+
+        t++;  // Increment timestep
+
+        for (size_t l = 0; l < layers.size(); ++l) {
+            for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
+                // Update biased first moment estimate
+                m[l][i] = m[l][i] * beta1 + gradients[l][i] * (1.0 - beta1);
+
+                // Update biased second raw moment estimate
+                v[l][i] = v[l][i] * beta2 + gradients[l][i].hadamard(gradients[l][i]) * (1.0 - beta2);
+
+                // Compute bias-corrected first moment estimate
+                Matrix m_hat = m[l][i] * (1.0 / (1.0 - std::pow(beta1, t)));
+
+                // Compute bias-corrected second raw moment estimate
+                Matrix v_hat = v[l][i] * (1.0 / (1.0 - std::pow(beta2, t)));
+
+                // Compute the update
+                Matrix update = m_hat.hadamard(v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); }));
+
+                // Apply the update
+                if (i == 0) {
+                    layers[l].weights = layers[l].weights - update * learning_rate;
+                } else {
+                    layers[l].bias = layers[l].bias - update * learning_rate;
+                }
+            }
         }
     }
 };
@@ -1214,17 +1271,19 @@ int main() {
 
     // create the neural network
     int input_size = 28 * 28;
-    std::vector<int> topology = {input_size, 32, 32, 10};
-    std::vector<std::string> activation_functions = {"relu", "relu", "softmax"};
+    std::vector<int> topology = {input_size, 64, 64, 32, 10};
+    std::vector<std::string> activation_functions = {"relu", "relu", "relu", "softmax"};
     NeuralNetwork nn(topology, activation_functions);
 
     int batch_size = 128;
-    int epochs = 20;
-    double learning_rate = 0.01;
-    double momentum_coefficient = 0.8;
+    int epochs = 30;
+    // double learning_rate = 0.1;
+    // double momentum_coefficient = 0.8;
+
+
 
     // train the neural network
-    nn.set_optimiser(std::make_unique<SGDOptimiser>(learning_rate));
+    nn.set_optimiser(std::make_unique<AdamOptimiser>());
     nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
