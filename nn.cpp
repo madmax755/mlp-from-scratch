@@ -299,10 +299,10 @@ class Optimiser {
     // set destructor to default
     virtual ~Optimiser() = default;
 
-    // Helper function to calculate gradients for a single example
+    // helper function to calculate gradients for a single example
     virtual std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
                                                                 const Matrix &target) {
-        // Forward pass
+        // forward pass
         std::vector<Matrix> activations = {input};
         std::vector<Matrix> preactivations = {input};
 
@@ -312,25 +312,25 @@ class Optimiser {
             preactivations.push_back(results[1]);
         }
 
-        // Backward pass
+        // backward pass
         int num_layers = layers.size();
         std::vector<Matrix> deltas;
         deltas.reserve(num_layers);
 
-        // Output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
+        // output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
         Matrix output_delta = activations.back() - target;
         if (layers.back().activation_function == "sigmoid") {
             output_delta = output_delta.hadamard(preactivations.back().apply(sigmoid_derivative));
         } else if (layers.back().activation_function == "relu") {
             output_delta = output_delta.hadamard(preactivations.back().apply(relu_derivative));
         } else if (layers.back().activation_function == "softmax" or layers.back().activation_function == "none") {
-            // For softmax and none, the delta is already correct (assuming cross-entropy loss)
+            // for softmax and none, the delta is already correct (assuming cross-entropy loss)
         } else {
             throw std::runtime_error("Unsupported activation function");
         }
         deltas.push_back(output_delta);
 
-        // Hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
+        // hidden layer errors (δ^l = ((w^(l+1))^T δ^(l+1)) ⊙ σ'(z^l))
         for (int l = num_layers - 2; l >= 0; --l) {
             Matrix delta = (layers[l + 1].weights.transpose() * deltas.back());
             if (layers[l].activation_function == "sigmoid") {
@@ -348,7 +348,7 @@ class Optimiser {
         // reverse deltas to match layer order
         std::reverse(deltas.begin(), deltas.end());
 
-        // Calculate gradients
+        // calculate gradients
         std::vector<std::vector<Matrix>> gradients;
         for (int l = 0; l < num_layers; ++l) {
             Matrix weight_gradient = deltas[l] * activations[l].transpose();
@@ -358,7 +358,7 @@ class Optimiser {
         return gradients;
     }
 
-    // Helper function to average gradients
+    // helper function to average gradients
     std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>> &batch_gradients) {
         std::vector<std::vector<Matrix>> avg_gradients;
         size_t num_layers = batch_gradients[0].size();
@@ -531,29 +531,92 @@ class AdamOptimiser : public Optimiser {
             initialize_moments(layers);
         }
 
-        t++;  // Increment timestep
+        t++;  // increment timestep
 
         for (size_t l = 0; l < layers.size(); ++l) {
             for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
-                // Update biased first moment estimate
+                // update biased first moment estimate
                 m[l][i] = m[l][i] * beta1 + gradients[l][i] * (1.0 - beta1);
 
-                // Update biased second raw moment estimate
+                // update biased second raw moment estimate
                 v[l][i] = v[l][i] * beta2 + gradients[l][i].hadamard(gradients[l][i]) * (1.0 - beta2);
 
-                // Compute bias-corrected first moment estimate
+                // compute bias-corrected first moment estimate
                 Matrix m_hat = m[l][i] * (1.0 / (1.0 - std::pow(beta1, t)));
 
-                // Compute bias-corrected second raw moment estimate
+                // compute bias-corrected second raw moment estimate
                 Matrix v_hat = v[l][i] * (1.0 / (1.0 - std::pow(beta2, t)));
 
-                // Compute the update
+                // compute the update
                 Matrix update = m_hat.hadamard(v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); }));
 
-                // Apply the update
+                // apply the update
                 if (i == 0) {
                     layers[l].weights = layers[l].weights - update * learning_rate;
                 } else {
+                    layers[l].bias = layers[l].bias - update * learning_rate;
+                }
+            }
+        }
+    }
+};
+
+class AdamWOptimiser : public Optimiser {
+private:
+    double learning_rate;
+    double beta1;
+    double beta2;
+    double epsilon;
+    double weight_decay;
+    int t;  // timestep
+    std::vector<std::vector<Matrix>> m;  // first moment
+    std::vector<std::vector<Matrix>> v;  // second moment
+
+public:
+    AdamWOptimiser(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8, double wd = 0.01)
+        : learning_rate(lr), beta1(b1), beta2(b2), epsilon(eps), weight_decay(wd), t(0) {}
+
+    void initialize_moments(const std::vector<Layer> &layers) {
+        m.clear();
+        v.clear();
+        for (const auto &layer : layers) {
+            m.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+            v.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
+        }
+    }
+
+    void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
+        if (m.empty() || v.empty()) {
+            initialize_moments(layers);
+        }
+
+        t++;  // increment timestep
+
+        for (size_t l = 0; l < layers.size(); ++l) {
+            for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
+                // update biased first moment estimate
+                m[l][i] = m[l][i] * beta1 + gradients[l][i] * (1.0 - beta1);
+
+                // update biased second raw moment estimate
+                v[l][i] = v[l][i] * beta2 + gradients[l][i].hadamard(gradients[l][i]) * (1.0 - beta2);
+
+                // compute bias-corrected first moment estimate
+                Matrix m_hat = m[l][i] * (1.0 / (1.0 - std::pow(beta1, t)));
+
+                // compute bias-corrected second raw moment estimate
+                Matrix v_hat = v[l][i] * (1.0 / (1.0 - std::pow(beta2, t)));
+
+                // compute the Adam update
+                Matrix update = m_hat.hadamard(v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); }));
+
+                // apply the update
+                if (i == 0) {  // for weights
+                    // apply weight decay
+                    layers[l].weights = layers[l].weights * (1.0 - learning_rate * weight_decay);
+                    // apply Adam update
+                    layers[l].weights = layers[l].weights - (update * learning_rate);
+                } else {  // for biases
+                    // biases typically don't use weight decay
                     layers[l].bias = layers[l].bias - update * learning_rate;
                 }
             }
@@ -953,11 +1016,11 @@ class NeuralNetwork {
         std::mutex gradients_mutex;
         int counter = 0;
 
-        // Create a vector of indices
+        // create a vector of indices
         std::vector<size_t> indices(training_data.size());
         std::iota(indices.begin(), indices.end(), 0);
 
-        // Random number generator
+        // random number generator
         std::random_device rd;
         std::mt19937 generator(rd());
 
@@ -1205,21 +1268,6 @@ class NeuralNetwork {
     }
 };
 
-// mean Squared Error (MSE) loss function
-double mse_loss(const Matrix &predicted, const Matrix &target) {
-    if (predicted.rows != target.rows or predicted.cols != target.cols) {
-        throw std::invalid_argument("Dimensions of predicted and target matrices don't match");
-    }
-
-    double sum = 0.0;
-    for (size_t i = 0; i < predicted.rows; ++i) {
-        for (size_t j = 0; j < predicted.cols; ++j) {
-            double diff = predicted.data[i][j] - target.data[i][j];
-            sum += diff * diff;
-        }
-    }
-    return sum / (predicted.rows * predicted.cols);
-}
 
 int main() {
     std::vector<std::vector<Matrix>> training_set;
@@ -1283,7 +1331,7 @@ int main() {
 
 
     // train the neural network
-    nn.set_optimiser(std::make_unique<AdamOptimiser>());
+    nn.set_optimiser(std::make_unique<AdamWOptimiser>());
     nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
