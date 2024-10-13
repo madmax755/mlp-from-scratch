@@ -404,16 +404,14 @@ class SGDOptimiser : public Optimiser {
         }
 
         // compute and apply updates
-        std::vector<std::vector<Matrix>> update;
         for (size_t l = 0; l < layers.size(); ++l) {
-            std::vector<Matrix> layer_update;
             for (int i = 0; i < 2; ++i) {  // 0 for weights, 1 for biases
                 // compute adjustment
                 velocity[l][i] = gradients[l][i]* -learning_rate;
             }
             // apply adjustment
-            layers[l].weights = layers[l].weights + update[l][0];
-            layers[l].bias = layers[l].bias + update[l][1];
+            layers[l].weights = layers[l].weights + velocity[l][0];
+            layers[l].bias = layers[l].bias + velocity[l][1];
         }
     }
 };
@@ -1217,16 +1215,16 @@ int main() {
     // create the neural network
     int input_size = 28 * 28;
     std::vector<int> topology = {input_size, 32, 32, 10};
-    std::vector<std::string> activation_functions = {"sigmoid", "sigmoid", "softmax"};
+    std::vector<std::string> activation_functions = {"relu", "relu", "softmax"};
     NeuralNetwork nn(topology, activation_functions);
 
     int batch_size = 128;
     int epochs = 20;
-    double learning_rate = 0.1;
+    double learning_rate = 0.01;
     double momentum_coefficient = 0.8;
 
     // train the neural network
-    nn.set_optimiser(std::make_unique<NesterovMomentumOptimiser>(learning_rate, momentum_coefficient));
+    nn.set_optimiser(std::make_unique<SGDOptimiser>(learning_rate));
     nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
