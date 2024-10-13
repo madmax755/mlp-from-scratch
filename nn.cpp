@@ -1319,12 +1319,12 @@ int main() {
 
     // create the neural network
     int input_size = 28 * 28;
-    std::vector<int> topology = {input_size, 64, 64, 32, 10};
+    std::vector<int> topology = {input_size, 128, 64, 32, 10};
     std::vector<std::string> activation_functions = {"relu", "relu", "relu", "softmax"};
     NeuralNetwork nn(topology, activation_functions);
 
     int batch_size = 128;
-    int epochs = 30;
+    int epochs = 50;
     // double learning_rate = 0.1;
     // double momentum_coefficient = 0.8;
 
