@@ -12,6 +12,8 @@
 #include <thread>
 #include <vector>
 
+// ---------------------------------- ACTIVATION FUNCTIONS -------------------------------------------
+
 // sigmoid activation function
 double sigmoid(double x) { return 1.0 / (1.0 + std::exp(-x)); }
 
@@ -53,13 +55,19 @@ class Matrix {
     std::vector<std::vector<double>> data;  // 2D vector to store matrix data
     size_t rows, cols;                      // dimensions of the matrix
 
-    // constructor: initialize matrix with given dimensions
+    /**
+     * @brief Constructs a Matrix object with the specified dimensions.
+     * @param rows Number of rows in the matrix.
+     * @param cols Number of columns in the matrix.
+     */
     Matrix(size_t rows, size_t cols) : rows(rows), cols(cols) {
         data.resize(rows,
                     std::vector<double>(cols, 0.0));  // resise the data vector to have 'rows' elements with a vector as the value
     }
 
-    // initialize matrix with random values between -1 and 1
+    /**
+     * @brief Initializes the matrix with random values between -1 and 1.
+     */
     void uniform_initialise() {
         std::random_device rd;                            // obtain a random number from hardware
         std::mt19937 gen(rd());                           // seed the generator
@@ -71,7 +79,9 @@ class Matrix {
         }
     }
 
-    // initialize matrix with zeros
+    /**
+     * @brief Initializes the matrix with zeros.
+     */
     void zero_initialise() {
         for (auto &row : data) {
             for (auto &elem : row) {
@@ -80,7 +90,10 @@ class Matrix {
         }
     }
 
-    // for sigmoid activation
+    /**
+     * @brief Initializes the matrix using Xavier initialization method.
+     * Suitable for sigmoid activation functions.
+     */
     void xavier_initialize() {
         std::random_device rd;
         std::mt19937 gen(rd());
@@ -93,7 +106,10 @@ class Matrix {
         }
     }
 
-    // for ReLU activation
+    /**
+     * @brief Initializes the matrix using He initialization method.
+     * Suitable for ReLU activation functions.
+     */
     void he_initialise() {
         std::random_device rd;
         std::mt19937 gen(rd());
@@ -106,7 +122,11 @@ class Matrix {
         }
     }
 
-    // matrix multiplication overloading the * operator
+    /**
+     * @brief Overloads the multiplication operator for matrix multiplication.
+     * @param other The matrix to multiply with.
+     * @return The resulting matrix after multiplication.
+     */
     Matrix operator*(const Matrix &other) const {
         if (cols != other.rows) {
             std::cerr << "Attempted to multiply matrices of incompatible dimensions: "
@@ -125,7 +145,11 @@ class Matrix {
         return result;
     }
 
-    // element-wise addition
+    /**
+     * @brief Overloads the addition operator for element-wise matrix addition.
+     * @param other The matrix to add.
+     * @return The resulting matrix after addition.
+     */
     Matrix operator+(const Matrix &other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for addition");
@@ -139,7 +163,11 @@ class Matrix {
         return result;
     }
 
-    // element-wise subtraction
+    /**
+     * @brief Overloads the subtraction operator for element-wise matrix subtraction.
+     * @param other The matrix to subtract.
+     * @return The resulting matrix after subtraction.
+     */
     Matrix operator-(const Matrix &other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for subtraction");
@@ -153,7 +181,11 @@ class Matrix {
         return result;
     }
 
-    // scalar multiplication
+    /**
+     * @brief Overloads the multiplication operator for scalar multiplication.
+     * @param scalar The scalar value to multiply with.
+     * @return The resulting matrix after scalar multiplication.
+     */
     Matrix operator*(double scalar) const {
         Matrix result(rows, cols);
         for (size_t i = 0; i < rows; i++) {
@@ -164,7 +196,10 @@ class Matrix {
         return result;
     }
 
-    // transpose
+    /**
+     * @brief Computes the transpose of the matrix.
+     * @return The transposed matrix.
+     */
     Matrix transpose() const {
         Matrix result(cols, rows);
         for (size_t i = 0; i < rows; i++) {
@@ -175,7 +210,11 @@ class Matrix {
         return result;
     }
 
-    // hadamard producht
+    /**
+     * @brief Computes the Hadamard product (element-wise multiplication) of two matrices.
+     * @param other The matrix to perform Hadamard product with.
+     * @return The resulting matrix after Hadamard product.
+     */
     Matrix hadamard(const Matrix &other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for Hadamard product");
@@ -189,7 +228,11 @@ class Matrix {
         return result;
     }
 
-    // applies a function to every element in the array - for  passing in pointers
+    /**
+     * @brief Applies a function to every element in the matrix.
+     * @param func A function pointer to apply to each element.
+     * @return The resulting matrix after applying the function.
+     */
     Matrix apply(double (*func)(double)) const {
         Matrix result(rows, cols);
         for (size_t i = 0; i < rows; i++) {
@@ -200,7 +243,12 @@ class Matrix {
         return result;
     }
 
-    // applies a function to every element in the array - for passing in lambda functions and other callable objects
+    /**
+     * @brief Applies a function to every element in the matrix.
+     * @tparam Func The type of the callable object.
+     * @param func A callable object to apply to each element.
+     * @return The resulting matrix after applying the function.
+     */
     template <typename Func>
     Matrix apply(Func func) const {
         Matrix result(rows, cols);
@@ -212,6 +260,10 @@ class Matrix {
         return result;
     }
 
+    /**
+     * @brief Applies the softmax function to the matrix.
+     * @return The resulting matrix after applying softmax.
+     */
     Matrix softmax() const {
         Matrix result(rows, cols);
 
@@ -243,7 +295,12 @@ class Layer {
     Matrix bias;
     std::string activation_function;
 
-    // constructor: initializes parameters
+    /**
+     * @brief Constructs a Layer object with specified input size, output size, and activation function.
+     * @param input_size The number of input neurons.
+     * @param output_size The number of output neurons.
+     * @param activation_function The activation function to use (default: "sigmoid").
+     */
     Layer(size_t input_size, size_t output_size, std::string activation_function = "sigmoid")
         : weights(output_size, input_size), bias(output_size, 1), activation_function(activation_function) {
         if (activation_function == "sigmoid") {
@@ -255,7 +312,11 @@ class Layer {
         }
     }
 
-    // perform feedforward operation for this layer - returns the activations
+    /**
+     * @brief Performs feedforward operation for this layer.
+     * @param input The input matrix.
+     * @return The output matrix after applying the layer's transformation.
+     */
     Matrix feedforward(const Matrix &input) {
         Matrix z = weights * input + bias;
         Matrix output(z.rows, z.cols);
@@ -272,7 +333,11 @@ class Layer {
         return output;
     }
 
-    // perform feedforward operation for this layer - returns the activations AND PREACTIVATIONS for use in backpropagation
+    /**
+     * @brief Performs feedforward operation for this layer and returns both output and pre-activation.
+     * @param input The input matrix.
+     * @return A vector containing the output matrix and pre-activation matrix.
+     */
     std::vector<Matrix> feedforward_backprop(const Matrix &input) const {
         Matrix z = weights * input + bias;
         Matrix output(z.rows, z.cols);
@@ -290,16 +355,31 @@ class Layer {
     }
 };
 
+// -----------------------------------------------------------------------------------------------------
+// ---------------------------------------- OPTIMISERS -------------------------------------------------
+
 // base Optimiser class
 class Optimiser {
    public:
-    // requires implementation in child classes
+    /**
+     * @brief Computes and applies updates to the network layers based on gradients.
+     * @param layers The layers of the neural network to update.
+     * @param gradients The gradients used for updating the layers.
+     */
     virtual void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) = 0;
 
-    // set destructor to default
+    /**
+     * @brief Virtual destructor for the Optimiser class.
+     */
     virtual ~Optimiser() = default;
 
-    // helper function to calculate gradients for a single example
+    /**
+     * @brief Calculates gradients for a single example.
+     * @param layers The layers of the neural network.
+     * @param input The input matrix.
+     * @param target The target matrix.
+     * @return A vector of gradients for each layer.
+     */
     virtual std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
                                                                 const Matrix &target) {
         // forward pass
@@ -358,7 +438,11 @@ class Optimiser {
         return gradients;
     }
 
-    // helper function to average gradients
+    /**
+     * @brief Averages gradients from multiple examples.
+     * @param batch_gradients A vector of gradients from multiple examples.
+     * @return The averaged gradients.
+     */
     std::vector<std::vector<Matrix>> average_gradients(const std::vector<std::vector<std::vector<Matrix>>> &batch_gradients) {
         std::vector<std::vector<Matrix>> avg_gradients;
         size_t num_layers = batch_gradients[0].size();
@@ -389,8 +473,16 @@ class SGDOptimiser : public Optimiser {
     std::vector<std::vector<Matrix>> velocity;
 
    public:
+    /**
+     * @brief Constructs an SGDOptimiser object with the specified learning rate.
+     * @param lr The learning rate (default: 0.1).
+     */
     SGDOptimiser(double lr = 0.1) : learning_rate(lr) {}
 
+    /**
+     * @brief Initializes the velocity vectors for SGD optimization.
+     * @param layers The layers of the neural network.
+     */
     void initialize_velocity(const std::vector<Layer> &layers) {
         velocity.clear();
         for (const auto &layer : layers) {
@@ -398,6 +490,11 @@ class SGDOptimiser : public Optimiser {
         }
     }
 
+    /**
+     * @brief Computes and applies updates using Stochastic Gradient Descent.
+     * @param layers The layers of the neural network to update.
+     * @param gradients The gradients used for updating the layers.
+     */
     void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (velocity.empty()) {
             initialize_velocity(layers);
@@ -423,8 +520,17 @@ class SGDMomentumOptimiser : public Optimiser {
     std::vector<std::vector<Matrix>> velocity;
 
    public:
+    /**
+     * @brief Constructs an SGDMomentumOptimiser object with the specified learning rate and momentum.
+     * @param lr The learning rate (default: 0.1).
+     * @param mom The momentum coefficient (default: 0.9).
+     */
     SGDMomentumOptimiser(double lr = 0.1, double mom = 0.9) : learning_rate(lr), momentum(mom) {}
 
+    /**
+     * @brief Initializes the velocity vectors for SGD with Momentum optimization.
+     * @param layers The layers of the neural network.
+     */
     void initialize_velocity(const std::vector<Layer> &layers) {
         velocity.clear();
         for (const auto &layer : layers) {
@@ -432,6 +538,11 @@ class SGDMomentumOptimiser : public Optimiser {
         }
     }
 
+    /**
+     * @brief Computes and applies updates using Stochastic Gradient Descent with Momentum.
+     * @param layers The layers of the neural network to update.
+     * @param gradients The gradients used for updating the layers.
+     */
     void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (velocity.empty()) {
             initialize_velocity(layers);
@@ -457,8 +568,17 @@ class NesterovMomentumOptimiser : public Optimiser {
     std::vector<std::vector<Matrix>> velocity;
 
    public:
+    /**
+     * @brief Constructs a NesterovMomentumOptimiser object with the specified learning rate and momentum.
+     * @param lr The learning rate (default: 0.1).
+     * @param mom The momentum coefficient (default: 0.9).
+     */
     NesterovMomentumOptimiser(double lr = 0.1, double mom = 0.9) : learning_rate(lr), momentum(mom) {}
 
+    /**
+     * @brief Initializes the velocity vectors for Nesterov Momentum optimization.
+     * @param layers The layers of the neural network.
+     */
     void initialize_velocity(const std::vector<Layer> &layers) {
         velocity.clear();
         for (const auto &layer : layers) {
@@ -466,6 +586,13 @@ class NesterovMomentumOptimiser : public Optimiser {
         }
     }
 
+    /**
+     * @brief Calculates gradients using Nesterov momentum.
+     * @param layers The layers of the neural network.
+     * @param input The input matrix.
+     * @param target The target matrix.
+     * @return A vector of gradients for each layer.
+     */
     std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
                                                         const Matrix &target) override {
         // get lookahead position
@@ -485,6 +612,11 @@ class NesterovMomentumOptimiser : public Optimiser {
         return gradients;
     }
 
+    /**
+     * @brief Computes and applies updates using Nesterov Momentum.
+     * @param layers The layers of the neural network to update.
+     * @param gradients The gradients used for updating the layers.
+     */
     void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (velocity.empty()) {
             initialize_velocity(layers);
@@ -514,9 +646,20 @@ class AdamOptimiser : public Optimiser {
     std::vector<std::vector<Matrix>> v;  // second moment
 
    public:
+    /**
+     * @brief Constructs an AdamOptimiser object with the specified parameters.
+     * @param lr The learning rate (default: 0.001).
+     * @param b1 The beta1 parameter (default: 0.9).
+     * @param b2 The beta2 parameter (default: 0.999).
+     * @param eps The epsilon parameter for numerical stability (default: 1e-8).
+     */
     AdamOptimiser(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8)
         : learning_rate(lr), beta1(b1), beta2(b2), epsilon(eps), t(0) {}
 
+    /**
+     * @brief Initializes the first and second moment vectors for Adam optimization.
+     * @param layers The layers of the neural network.
+     */
     void initialize_moments(const std::vector<Layer> &layers) {
         m.clear();
         v.clear();
@@ -526,6 +669,11 @@ class AdamOptimiser : public Optimiser {
         }
     }
 
+    /**
+     * @brief Computes and applies updates using the Adam optimization algorithm.
+     * @param layers The layers of the neural network to update.
+     * @param gradients The gradients used for updating the layers.
+     */
     void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (m.empty() or v.empty()) {
             initialize_moments(layers);
@@ -562,20 +710,32 @@ class AdamOptimiser : public Optimiser {
 };
 
 class AdamWOptimiser : public Optimiser {
-private:
+   private:
     double learning_rate;
     double beta1;
     double beta2;
     double epsilon;
     double weight_decay;
-    int t;  // timestep
+    int t;                               // timestep
     std::vector<std::vector<Matrix>> m;  // first moment
     std::vector<std::vector<Matrix>> v;  // second moment
 
-public:
+   public:
+    /**
+     * @brief Constructs an AdamWOptimiser object with the specified parameters.
+     * @param lr The learning rate (default: 0.001).
+     * @param b1 The beta1 parameter (default: 0.9).
+     * @param b2 The beta2 parameter (default: 0.999).
+     * @param eps The epsilon parameter for numerical stability (default: 1e-8).
+     * @param wd The weight decay parameter (default: 0.01).
+     */
     AdamWOptimiser(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8, double wd = 0.01)
         : learning_rate(lr), beta1(b1), beta2(b2), epsilon(eps), weight_decay(wd), t(0) {}
 
+    /**
+     * @brief Initializes the first and second moment vectors for AdamW optimization.
+     * @param layers The layers of the neural network.
+     */
     void initialize_moments(const std::vector<Layer> &layers) {
         m.clear();
         v.clear();
@@ -585,6 +745,11 @@ public:
         }
     }
 
+    /**
+     * @brief Computes and applies updates using the AdamW optimization algorithm.
+     * @param layers The layers of the neural network to update.
+     * @param gradients The gradients used for updating the layers.
+     */
     void compute_and_apply_updates(std::vector<Layer> &layers, const std::vector<std::vector<Matrix>> &gradients) override {
         if (m.empty() || v.empty()) {
             initialize_moments(layers);
@@ -624,10 +789,10 @@ public:
     }
 };
 
-// neural network class
+// -----------------------------------------------------------------------------------------------------
+
 class NeuralNetwork {
    public:
-    // todo make these private - check if nothing breaks
     std::vector<Layer> layers;
     std::unique_ptr<Optimiser> optimiser;
     // have to use a pointer otherwise class cannot be constructed (mutex is not moveable/copyable etc.)
@@ -640,7 +805,11 @@ class NeuralNetwork {
         double f1_score;
     };
 
-    // constructor: create layers based on the given topology
+    /**
+     * @brief Constructs a NeuralNetwork object with the specified topology and activation functions.
+     * @param topology A vector specifying the number of neurons in each layer.
+     * @param activation_functions A vector specifying the activation function for each layer (optional).
+     */
     NeuralNetwork(const std::vector<int> &topology, const std::vector<std::string> activation_functions = {})
         : layers_mutex(std::make_unique<std::mutex>()) {
         if ((activation_functions.size() + 1 != topology.size()) and (activation_functions.size() != 0)) {
@@ -658,7 +827,11 @@ class NeuralNetwork {
         }
     }
 
-    // perform feedforward operation through all layers
+    /**
+     * @brief Performs feedforward operation through all layers of the network.
+     * @param input The input matrix.
+     * @return The output matrix after passing through all layers.
+     */
     Matrix feedforward(const Matrix &input) {
         Matrix current = input;
         for (auto &layer : layers) {
@@ -667,8 +840,13 @@ class NeuralNetwork {
         return current;
     }
 
+    /**
+     * @brief Sets the optimiser for the neural network.
+     * @param new_optimiser A unique pointer to the new Optimiser object.
+     */
     void set_optimiser(std::unique_ptr<Optimiser> new_optimiser) { optimiser = std::move(new_optimiser); }
 
+    // train the neural network using optimiser set
     void train_mt_optimiser(const std::vector<std::vector<Matrix>> &training_data,
                             const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size) {
         unsigned int num_threads = std::thread::hardware_concurrency();
@@ -774,7 +952,13 @@ class NeuralNetwork {
         }
     }
 
-    // gets the index of the maximum element in a nx1 matrix
+    /**
+     * @brief Trains the neural network using multi-threaded optimization.
+     * @param training_data The training dataset.
+     * @param eval_data The evaluation dataset.
+     * @param epochs The number of training epochs.
+     * @param batch_size The size of each batch for training.
+     */
     size_t get_index_of_max_element_in_nx1_matrix(const Matrix &matrix) {
         size_t index = 0;
         double max_value = matrix.data[0][0];
@@ -787,7 +971,11 @@ class NeuralNetwork {
         return index;
     }
 
-    // calculates the EvaluationMetrics on the inputted data
+    /**
+     * @brief Evaluates the neural network on the given test data.
+     * @param test_data The test dataset.
+     * @return An EvaluationMetrics struct containing accuracy, precision, recall, and F1 score.
+     */
     EvaluationMetrics evaluate_nn(const std::vector<std::vector<Matrix>> &test_data) {
         if (test_data.empty() or test_data[0].size() != 2) {
             throw std::invalid_argument(
@@ -832,7 +1020,10 @@ class NeuralNetwork {
         return {accuracy, precision, recall, f1_score};
     }
 
-    // method to save the model
+    /**
+     * @brief Saves the current state of the neural network to a file.
+     * @param filename The name of the file to save the model to.
+     */
     void save_model(const std::string &filename) const {
         std::ofstream file(filename, std::ios::binary);
         if (!file) {
@@ -872,6 +1063,11 @@ class NeuralNetwork {
         std::cout << "Model saved successfully. File size: " << file.tellp() << " bytes" << std::endl;
     }
 
+    /**
+     * @brief Loads a neural network model from a file.
+     * @param filename The name of the file to load the model from.
+     * @return A NeuralNetwork object initialized with the loaded model.
+     */
     static NeuralNetwork load_model(const std::string &filename) {
         std::ifstream file(filename, std::ios::binary);
         if (!file) {
@@ -929,7 +1125,7 @@ class NeuralNetwork {
     }
 };
 
-
+// runner code
 int main() {
     std::vector<std::vector<Matrix>> training_set;
     training_set.reserve(9000);
@@ -988,8 +1184,6 @@ int main() {
     int epochs = 50;
     // double learning_rate = 0.1;
     // double momentum_coefficient = 0.8;
-
-
 
     // train the neural network
     nn.set_optimiser(std::make_unique<AdamWOptimiser>());
