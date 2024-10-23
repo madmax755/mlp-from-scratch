@@ -355,6 +355,54 @@ class Layer {
     }
 };
 
+class Loss {
+   public:
+    virtual ~Loss() = default;
+
+    // Compute the loss value
+    virtual double compute(const Matrix &predicted, const Matrix &target) const = 0;
+
+    // Compute the derivative of the loss with respect to the predicted values
+    virtual Matrix derivative(const Matrix &predicted, const Matrix &target) const = 0;
+};
+
+class CrossEntropyLoss : public Loss {
+   public:
+    double compute(const Matrix &predicted, const Matrix &target) const override {
+        double loss = 0.0;
+        for (size_t i = 0; i < predicted.rows; ++i) {
+            for (size_t j = 0; j < predicted.cols; ++j) {
+                // Add small epsilon to avoid log(0)
+                loss -= target.data[i][j] * std::log(predicted.data[i][j] + 1e-10);
+            }
+        }
+        return loss / predicted.cols;  // Average over batch
+    }
+
+    Matrix derivative(const Matrix &predicted, const Matrix &target) const override {
+        // For cross entropy with softmax, the derivative simplifies to (predicted - target)
+        return predicted - target;
+    }
+};
+
+class MSELoss : public Loss {
+   public:
+    double compute(const Matrix &predicted, const Matrix &target) const override {
+        double loss = 0.0;
+        for (size_t i = 0; i < predicted.rows; ++i) {
+            for (size_t j = 0; j < predicted.cols; ++j) {
+                double diff = predicted.data[i][j] - target.data[i][j];
+                loss += diff * diff;
+            }
+        }
+        return loss / (2.0 * predicted.cols);  // Average over batch and divide by 2
+    }
+
+    Matrix derivative(const Matrix &predicted, const Matrix &target) const override {
+        return (predicted - target) * (1.0 / predicted.cols);
+    }
+};
+
 // -----------------------------------------------------------------------------------------------------
 // ---------------------------------------- OPTIMISERS -------------------------------------------------
 
@@ -381,7 +429,7 @@ class Optimiser {
      * @return A vector of gradients for each layer.
      */
     virtual std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
-                                                                const Matrix &target) {
+                                                                const Matrix &target, const Loss &loss) {
         // forward pass
         std::vector<Matrix> activations = {input};
         std::vector<Matrix> preactivations = {input};
@@ -398,7 +446,7 @@ class Optimiser {
         deltas.reserve(num_layers);
 
         // output layer error (δ^L = ∇_a C ⊙ σ'(z^L))
-        Matrix output_delta = activations.back() - target;
+        Matrix output_delta = loss.derivative(activations.back(), target);
         if (layers.back().activation_function == "sigmoid") {
             output_delta = output_delta.hadamard(preactivations.back().apply(sigmoid_derivative));
         } else if (layers.back().activation_function == "relu") {
@@ -594,7 +642,7 @@ class NesterovMomentumOptimiser : public Optimiser {
      * @return A vector of gradients for each layer.
      */
     std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
-                                                        const Matrix &target) override {
+                                                        const Matrix &target, const Loss &loss) override {
         // get lookahead position
         std::vector<Layer> tmp_layers = layers;
         if (velocity.empty()) {
@@ -607,7 +655,7 @@ class NesterovMomentumOptimiser : public Optimiser {
         }
 
         // compute gradient at lookahead position
-        auto gradients = Optimiser::calculate_gradient(tmp_layers, input, target);
+        auto gradients = Optimiser::calculate_gradient(tmp_layers, input, target, loss);
 
         return gradients;
     }
@@ -795,6 +843,7 @@ class NeuralNetwork {
    public:
     std::vector<Layer> layers;
     std::unique_ptr<Optimiser> optimiser;
+    std::unique_ptr<Loss> loss;
     // have to use a pointer otherwise class cannot be constructed (mutex is not moveable/copyable etc.)
     std::unique_ptr<std::mutex> layers_mutex;
 
@@ -845,6 +894,12 @@ class NeuralNetwork {
      * @param new_optimiser A unique pointer to the new Optimiser object.
      */
     void set_optimiser(std::unique_ptr<Optimiser> new_optimiser) { optimiser = std::move(new_optimiser); }
+
+    /**
+     * @brief Sets the loss function for the neural network.
+     * @param new_loss A unique pointer to the new Loss object.
+     */
+    void set_loss(std::unique_ptr<Loss> new_loss) { loss = std::move(new_loss); }
 
     // train the neural network using optimiser set
     void train_mt_optimiser(const std::vector<std::vector<Matrix>> &training_data,
@@ -911,7 +966,7 @@ class NeuralNetwork {
                                 //     local_gradients.push_back(lookahead_gradients);
 
                                 // } else {
-                                auto gradient = optimiser->calculate_gradient(layers, input, target);
+                                auto gradient = optimiser->calculate_gradient(layers, input, target, *loss);
                                 local_gradients.push_back(gradient);
                                 // }
                             }
@@ -986,11 +1041,13 @@ class NeuralNetwork {
         int total_correct = 0;
         size_t total_examples = test_data.size();
 
+        double total_loss = 0.0;
         for (const auto &example : test_data) {
             const Matrix &input = example[0];
             const Matrix &target = example[1];
 
             Matrix output = this->feedforward(input);
+            total_loss += loss->compute(output, target);
 
             // assuming output and target are nx1 matrices
             size_t predicted_class = get_index_of_max_element_in_nx1_matrix(output);
@@ -1187,6 +1244,7 @@ int main() {
 
     // train the neural network
     nn.set_optimiser(std::make_unique<AdamWOptimiser>());
+    nn.set_loss(std::make_unique<CrossEntropyLoss>());
     nn.train_mt_optimiser(training_set, eval_set, epochs, batch_size);
     nn.save_model("mnist.model");
 
