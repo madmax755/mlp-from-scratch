@@ -355,6 +355,65 @@ class Layer {
     }
 };
 
+struct TrainingMetrics {
+    double loss;
+    double accuracy;
+    double precision;
+    double recall;
+    double f1_score;
+    int epoch;
+    int batch;
+    std::chrono::system_clock::time_point timestamp;
+
+    // Convert metrics to CSV row
+    std::string to_csv_row() const {
+        auto time_str = std::chrono::system_clock::to_time_t(timestamp);
+        std::stringstream ss;
+        ss << epoch << ","
+           << batch << ","
+           << std::fixed << std::setprecision(6)
+           << loss << ","
+           << accuracy << ","
+           << precision << ","
+           << recall << ","
+           << f1_score << ","
+           << std::ctime(&time_str);
+        return ss.str();
+    }
+
+    static std::string get_csv_header() {
+        return "epoch,batch,loss,accuracy,precision,recall,f1_score,timestamp\n";
+    }
+};
+
+class TrainingHistoryLogger {
+private:
+    std::string filename;
+    std::ofstream file;
+
+public:
+    explicit TrainingHistoryLogger(const std::string& filename) : filename(filename) {
+        // Create/open file and write header
+        file.open(filename);
+        if (!file.is_open()) {
+            throw std::runtime_error("Could not open file: " + filename);
+        }
+        file << TrainingMetrics::get_csv_header();
+        file.flush();
+    }
+
+    void log_metrics(const TrainingMetrics& metrics) {
+        file << metrics.to_csv_row();
+        file.flush();  // Ensure immediate write to disk
+    }
+
+    ~TrainingHistoryLogger() {
+        if (file.is_open()) {
+            file.close();
+        }
+    }
+};
+
 class Loss {
    public:
     virtual ~Loss() = default;
@@ -421,14 +480,19 @@ class Optimiser {
      */
     virtual ~Optimiser() = default;
 
+    struct GradientResult {
+        std::vector<std::vector<Matrix>> gradients;
+        Matrix output;
+    };
+
     /**
      * @brief Calculates gradients for a single example.
      * @param layers The layers of the neural network.
      * @param input The input matrix.
      * @param target The target matrix.
-     * @return A vector of gradients for each layer.
+     * @return A GradientResult struct containing gradients and the output of the network.
      */
-    virtual std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
+    virtual GradientResult calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
                                                                 const Matrix &target, const Loss &loss) {
         // forward pass
         std::vector<Matrix> activations = {input};
@@ -483,7 +547,8 @@ class Optimiser {
             gradients.push_back({weight_gradient, deltas[l]});
         }
 
-        return gradients;
+        // return a GradientResult struct for purposes of tracking loss
+        return {gradients, activations.back()};
     }
 
     /**
@@ -639,9 +704,9 @@ class NesterovMomentumOptimiser : public Optimiser {
      * @param layers The layers of the neural network.
      * @param input The input matrix.
      * @param target The target matrix.
-     * @return A vector of gradients for each layer.
+     * @return A GradientResult struct containing gradients and the output of the network.
      */
-    std::vector<std::vector<Matrix>> calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
+    GradientResult calculate_gradient(const std::vector<Layer> &layers, const Matrix &input,
                                                         const Matrix &target, const Loss &loss) override {
         // get lookahead position
         std::vector<Layer> tmp_layers = layers;
@@ -655,8 +720,9 @@ class NesterovMomentumOptimiser : public Optimiser {
         }
 
         // compute gradient at lookahead position
-        auto gradients = Optimiser::calculate_gradient(tmp_layers, input, target, loss);
+        GradientResult gradients = Optimiser::calculate_gradient(tmp_layers, input, target, loss);
 
+        // this returns a GradientResult struct for the lookahead position (not totally correct for loss tracking but not bad)
         return gradients;
     }
 
@@ -711,6 +777,8 @@ class AdamOptimiser : public Optimiser {
     void initialize_moments(const std::vector<Layer> &layers) {
         m.clear();
         v.clear();
+        m.reserve(layers.size());
+        v.reserve(layers.size());
         for (const auto &layer : layers) {
             m.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
             v.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
@@ -787,6 +855,8 @@ class AdamWOptimiser : public Optimiser {
     void initialize_moments(const std::vector<Layer> &layers) {
         m.clear();
         v.clear();
+        m.reserve(layers.size());
+        v.reserve(layers.size());
         for (const auto &layer : layers) {
             m.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
             v.push_back({Matrix(layer.weights.rows, layer.weights.cols), Matrix(layer.bias.rows, layer.bias.cols)});
@@ -846,12 +916,27 @@ class NeuralNetwork {
     std::unique_ptr<Loss> loss;
     // have to use a pointer otherwise class cannot be constructed (mutex is not moveable/copyable etc.)
     std::unique_ptr<std::mutex> layers_mutex;
+    std::unique_ptr<TrainingHistoryLogger> history_logger;
+
 
     struct EvaluationMetrics {
+        double loss;
         double accuracy;
         double precision;
         double recall;
         double f1_score;
+
+        // Add this operator overload for printing
+        friend std::ostream& operator<<(std::ostream& os, const EvaluationMetrics& metrics) {
+            os << "----------------\n"
+               << "Loss: " << metrics.loss << "\n"
+               << "Accuracy: " << metrics.accuracy << "\n"
+               << "Precision: " << metrics.precision << "\n"
+               << "Recall: " << metrics.recall << "\n"
+               << "F1 Score: " << metrics.f1_score << "\n"
+               << "----------------";
+            return os;
+        }
     };
 
     /**
@@ -861,6 +946,14 @@ class NeuralNetwork {
      */
     NeuralNetwork(const std::vector<int> &topology, const std::vector<std::string> activation_functions = {})
         : layers_mutex(std::make_unique<std::mutex>()) {
+        if (topology.empty()) {
+            throw std::invalid_argument("Topology cannot be empty");
+        }
+        for (int size : topology) {
+            if (size <= 0) {
+                throw std::invalid_argument("Layer size must be positive");
+            }
+        }
         if ((activation_functions.size() + 1 != topology.size()) and (activation_functions.size() != 0)) {
             throw std::invalid_argument(
                 "the size of activations_functions vector must be the same size as no. layers (ex. input)");
@@ -901,6 +994,10 @@ class NeuralNetwork {
      */
     void set_loss(std::unique_ptr<Loss> new_loss) { loss = std::move(new_loss); }
 
+    void enable_history_logging(const std::string& filename) {
+        history_logger = std::make_unique<TrainingHistoryLogger>(filename);
+    }
+
     // train the neural network using optimiser set
     void train_mt_optimiser(const std::vector<std::vector<Matrix>> &training_data,
                             const std::vector<std::vector<Matrix>> &eval_data, int epochs, int batch_size) {
@@ -909,6 +1006,10 @@ class NeuralNetwork {
         std::vector<std::vector<std::vector<std::vector<Matrix>>>> thread_gradients(num_threads);
         std::mutex gradients_mutex;
         int counter = 0;
+
+        // used for tracking loss of each batch
+        std::vector<Matrix> batch_outputs;
+        std::vector<Matrix> batch_targets;
 
         // create a vector of indices
         std::vector<size_t> indices(training_data.size());
@@ -926,12 +1027,17 @@ class NeuralNetwork {
 
             // iterate through batches
             for (size_t batch_start = 0; batch_start < training_data.size(); batch_start += batch_size) {
+                // Clear previous batch data
+                batch_outputs.clear();
+                batch_targets.clear();
+                size_t current_batch_size = std::min(batch_size, static_cast<int>(training_data.size() - batch_start));
+                batch_outputs.reserve(current_batch_size);
+                batch_targets.reserve(current_batch_size);
+
                 // clear previous gradients
                 for (auto &grad : thread_gradients) {
                     grad.clear();
                 }
-
-                size_t current_batch_size = std::min(batch_size, static_cast<int>(training_data.size() - batch_start));
 
                 // spawn threads - splits the batch up between the number of threads
                 for (unsigned int t = 0; t < num_threads; t++) {
@@ -941,40 +1047,32 @@ class NeuralNetwork {
 
                         std::vector<std::vector<std::vector<Matrix>>> local_gradients;
                         local_gradients.reserve(end - start);
+
+                        // Local vectors to collect outputs and targets
+                        std::vector<Matrix> local_outputs;
+                        std::vector<Matrix> local_targets;
+                        local_outputs.reserve(end - start);
+                        local_targets.reserve(end - start);
+
                         for (size_t i = start; i < end; i++) {
                             size_t index = indices[batch_start + i];
                             if (index < training_data.size()) {
                                 const auto &data_pair = training_data[index];
                                 const Matrix &input = data_pair[0];
                                 const Matrix &target = data_pair[1];
-
-                                // // nesterov requires a different place in parameter space to calculate the gradient from
-                                // if (training_algorithm == "nesterov") {
-                                //     // first, apply the look-ahead step
-                                //     std::vector<Layer> tmp_layers = layers;
-                                //     if (!prev_adjustments.empty()) {
-                                //         for (int l = 0; l < tmp_layers.size(); l++) {
-                                //             tmp_layers[l].weights =
-                                //                 tmp_layers[l].weights + (prev_adjustments[l][0] * momentum_coefficient);
-                                //             tmp_layers[l].bias =
-                                //                 tmp_layers[l].bias + (prev_adjustments[l][1] * momentum_coefficient);
-                                //         }
-                                //     }
-                                //     // now calculate gradients at the look-ahead position
-                                //     auto lookahead_gradients = this->calculate_gradient_custom(tmp_layers, input, target);
-
-                                //     local_gradients.push_back(lookahead_gradients);
-
-                                // } else {
-                                auto gradient = optimiser->calculate_gradient(layers, input, target, *loss);
+                                auto [gradient, output] = optimiser->calculate_gradient(layers, input, target, *loss);
                                 local_gradients.push_back(gradient);
-                                // }
+                                local_outputs.push_back(output);
+                                local_targets.push_back(target);
                             }
+                        }
 
-                            {
-                                std::lock_guard<std::mutex> lock(gradients_mutex);
-                                thread_gradients[t] = std::move(local_gradients);
-                            }
+                        // Single lock to update shared data
+                        {
+                            std::lock_guard<std::mutex> lock(gradients_mutex);
+                            batch_outputs.insert(batch_outputs.end(), local_outputs.begin(), local_outputs.end());
+                            batch_targets.insert(batch_targets.end(), local_targets.begin(), local_targets.end());
+                            thread_gradients[t] = std::move(local_gradients);
                         }
                     });
                 }
@@ -996,14 +1094,45 @@ class NeuralNetwork {
                 // apply gradients
                 optimiser->compute_and_apply_updates(layers, avg_gradient);
 
-                // if (counter % 50 == 0) {
-                //     auto eval_results = evaluate_nn(eval_data);
-                //     std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
-                // }
-                // counter++;
+                if (history_logger) {
+                    // Calculate average loss across batch (fast)
+                    double batch_loss = 0.0;
+                    for (size_t i = 0; i < batch_outputs.size(); ++i) {
+                        batch_loss += loss->compute(batch_outputs[i], batch_targets[i]);
+                    }
+                    batch_loss /= batch_outputs.size();
+                    
+                    TrainingMetrics metrics{
+                        batch_loss,
+                        0.0,  // These will be updated properly at epoch end
+                        0.0,
+                        0.0,
+                        0.0,
+                        epoch + 1,
+                        static_cast<int>(batch_start / batch_size) + 1,
+                        std::chrono::system_clock::now()
+                    };
+                    
+                    history_logger->log_metrics(metrics);
+                }
             }
             auto eval_results = evaluate_nn(eval_data);
-            std::cout << "----------------\naccuracy: " << eval_results.accuracy << "\n----------------\n";
+
+            // special metrics for epoch end
+            if (history_logger) {
+                TrainingMetrics metrics{
+                    eval_results.loss,  // current validation loss
+                    eval_results.accuracy,
+                    eval_results.precision,
+                    eval_results.recall,
+                    eval_results.f1_score,
+                    epoch + 1,
+                    -1,  // Special batch number to indicate epoch-end metrics
+                    std::chrono::system_clock::now()
+                };
+                history_logger->log_metrics(metrics);
+                std::cout << eval_results << std::endl;                
+            }
         }
     }
 
@@ -1014,7 +1143,7 @@ class NeuralNetwork {
      * @param epochs The number of training epochs.
      * @param batch_size The size of each batch for training.
      */
-    size_t get_index_of_max_element_in_nx1_matrix(const Matrix &matrix) {
+    size_t get_index_of_max_element_in_nx1_matrix(const Matrix &matrix) const {
         size_t index = 0;
         double max_value = matrix.data[0][0];
         for (size_t i = 1; i < matrix.rows; ++i) {
@@ -1062,6 +1191,8 @@ class NeuralNetwork {
             }
         }
 
+        double average_loss = total_loss / total_examples;
+
         double accuracy = static_cast<double>(total_correct) / total_examples;
 
         // avoid division by zero
@@ -1074,7 +1205,7 @@ class NeuralNetwork {
 
         double f1_score = (precision + recall > 0) ? 2 * (precision * recall) / (precision + recall) : 0.0;
 
-        return {accuracy, precision, recall, f1_score};
+        return {average_loss, accuracy, precision, recall, f1_score};
     }
 
     /**
@@ -1233,9 +1364,10 @@ int main() {
 
     // create the neural network
     int input_size = 28 * 28;
-    std::vector<int> topology = {input_size, 128, 64, 32, 10};
-    std::vector<std::string> activation_functions = {"relu", "relu", "relu", "softmax"};
+    std::vector<int> topology = {input_size, 64, 32, 32, 10};
+    std::vector<std::string> activation_functions = {"sigmoid", "sigmoid", "sigmoid", "softmax"};
     NeuralNetwork nn(topology, activation_functions);
+    nn.enable_history_logging("mnist_training_metrics.csv");
 
     int batch_size = 128;
     int epochs = 50;
