@@ -1322,7 +1322,7 @@ int main() {
 
     // create training set from binary image data files
     for (int i = 0; i < 10; ++i) {
-        std::string file_path = "mnist data/data" + std::to_string(i) + ".dat";
+        std::string file_path = "../mnist data/data" + std::to_string(i) + ".dat";
         std::vector<unsigned char> full_digit_data = read_file(file_path);
 
         for (int j = 0; j < 784000; j += 28 * 28) {  // todo make more general with training ratio
