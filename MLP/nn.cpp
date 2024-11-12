@@ -481,8 +481,9 @@ class Optimiser {
     virtual ~Optimiser() = default;
 
     struct GradientResult {
-        std::vector<std::vector<Matrix>> gradients;
-        Matrix output;
+        std::vector<std::vector<Matrix>> gradients; // list of layers, each layer has a list of weight and bias gradient matrices
+        Matrix input_layer_gradient;                // gradient of the input layer - for more general use as parts of bigger architectures
+        Matrix output;                              // output of the network
     };
 
     /**
@@ -548,7 +549,7 @@ class Optimiser {
         }
 
         // return a GradientResult struct for purposes of tracking loss
-        return {gradients, activations.back()};
+        return {gradients, deltas.front(), activations.back()};
     }
 
     /**
@@ -1060,7 +1061,7 @@ class NeuralNetwork {
                                 const auto &data_pair = training_data[index];
                                 const Matrix &input = data_pair[0];
                                 const Matrix &target = data_pair[1];
-                                auto [gradient, output] = optimiser->calculate_gradient(layers, input, target, *loss);
+                                auto [gradient, input_layer_gradient, output] = optimiser->calculate_gradient(layers, input, target, *loss);
                                 local_gradients.push_back(gradient);
                                 local_outputs.push_back(output);
                                 local_targets.push_back(target);
