@@ -27,7 +27,7 @@ double sigmoid_derivative(double x) {
 double relu(double x) { return std::max(x, 0.0); }
 
 // relu derivative
-double relu_derivative(double x) { return (x > 0) ? x : 0.0; }
+double relu_derivative(double x) { return (x > 0) ? 1.0 : 0.0; }
 
 // read binary file into a vector
 std::vector<unsigned char> read_file(const std::string &path) {
